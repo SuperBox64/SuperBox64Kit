@@ -59,7 +59,16 @@ enum B2 {
         def.gravity = b2Vec2(x: gx * 150.0, y: gy * 150.0)
         def.enableSleep = false
         def.maximumLinearSpeed = 4000.0
-        def.restitutionThreshold = 0.0
+        // Restitution threshold: contacts slower than this don't bounce. The kit
+        // had it at 0 (EVERYTHING bounces, even micro-velocities), so a body on a
+        // bouncy tile never settled — the unicorn hero bounced/skittered off its
+        // floating platform, and the laser (restitution 0, but Box2D combines
+        // restitution via MAX with the wall's value, unlike SpriteKit's gentler
+        // combine) bounced off the screen walls instead of stopping. A high
+        // threshold (above the laser's ~750 pt/s) suppresses these spurious
+        // bounces so bodies rest and the laser stops — matching SpriteKit, whose
+        // effective restitution for this game is near zero.
+        def.restitutionThreshold = 1000.0
         world = b2CreateWorld(&def)
         bodies.removeAll()
         joints.removeAll()
