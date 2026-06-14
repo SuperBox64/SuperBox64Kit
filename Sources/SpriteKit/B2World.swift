@@ -52,7 +52,11 @@ enum B2 {
             unitsConfigured = true
         }
         var def = b2DefaultWorldDef()
-        def.gravity = b2Vec2(x: gx, y: gy)
+        // SpriteKit gravity is in m/s² (default (0,-9.8)); Box2D works in the
+        // world's length units (here points, with 150 pts/m via
+        // b2SetLengthUnitsPerMeter). So convert m/s² -> points/s² by ×150,
+        // otherwise gravity is 150× too weak and bodies float instead of falling.
+        def.gravity = b2Vec2(x: gx * 150.0, y: gy * 150.0)
         def.enableSleep = false
         def.maximumLinearSpeed = 4000.0
         def.restitutionThreshold = 0.0
@@ -257,9 +261,15 @@ enum B2 {
         return b2Rot_GetAngle(b2Body_GetRotation(b))
     }
 
+    // SpriteKit force is N (kg·m/s²); masses here are real kg (density kg/m²,
+    // area/150²). With b2SetLengthUnitsPerMeter(150) Box2D works in points, so a
+    // screen-space force must be ×150 to stay dimensionally 1:1 (in lock step with
+    // mass denom 22500=150² and the gravity ×150). Impulse is folded into velocity
+    // upstream (applyImpulse) and is NOT scaled here.
+    static let forceScale: Float = 150.0
     static func applyForce(_ id: Int32, _ fx: Float, _ fy: Float) {
         guard let b = body(id) else { return }
-        b2Body_ApplyForceToCenter(b, b2Vec2(x: fx, y: fy), true)
+        b2Body_ApplyForceToCenter(b, b2Vec2(x: fx * forceScale, y: fy * forceScale), true)
     }
 
     static func applyImpulse(_ id: Int32, _ ix: Float, _ iy: Float) {

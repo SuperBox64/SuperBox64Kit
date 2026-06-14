@@ -34,7 +34,11 @@ public final class SKPhysicsBody {
     public var isDynamic = true
     public var affectedByGravity = true
     public var allowsRotation = true
-    static let appleVelocityScale: CGFloat = 1.5
+    // 1:1 with SpriteKit: velocity is points/s and (since 150 pts/m) the on-screen
+    // speed IS the Box2D velocity, so any multiplier scales screen speed (the
+    // getter divides it back out so reads round-trip). SpriteKit has no hidden
+    // gain → must be 1.0 (was 1.5, which made everything 1.5× too fast).
+    static let appleVelocityScale: CGFloat = 1.0
 
     var _velocity = CGVector.zero
     public var velocity: CGVector {
@@ -475,7 +479,7 @@ public final class SKPhysicsWorld {
     // can see where the physics shapes actually sit relative to the
     // sprites. OFF by default to match Apple SpriteKit (SKView.showsPhysics
     // is false by default); opt in via scene.physicsWorld.showsPhysics = true.
-    public var showsPhysics: Bool = true   // DEBUG: physics-body overlay on by default this session
+    public var showsPhysics: Bool = false  // OFF by default like SKView.showsPhysics; opt in via physicsWorld.showsPhysics = true
 
     // Walks every body in the registry and strokes its shape on the
     // active draw target. Called from SKView.render after the scene
@@ -734,11 +738,27 @@ public final class SKPhysicsWorld {
         createBodies(scene)                                   // pick up nodes added since last step
         createPendingJoints()                                 // joints added before their bodies
         applyFields(scene, dt: dt)                            // SKFieldNode → B2.applyForce
+        // Apple semantics: bodies fused by a pin/fixed joint move as one rigid
+        // cluster, so writing velocity to one member must apply to the whole
+        // cluster. The game zeroes ONLY the hero on stick release; canape+tractor
+        // are pinned to it and would otherwise keep their own velocity and feed
+        // momentum back through the joint solver — so the ship coasts instead of
+        // stopping on a dime. Propagate each velocity-dirty body's linear velocity
+        // (and zero angular velocity) into every body rigidly joined to it.
         for (_, b) in SKPhysicsWorld.registry where b.velocityDirty {
-            B2.setVelocity(b.bodyId,
-                           Float(b._velocity.dx * SKPhysicsBody.appleVelocityScale),
-                           Float(b._velocity.dy * SKPhysicsBody.appleVelocityScale))
+            let vx = Float(b._velocity.dx * SKPhysicsBody.appleVelocityScale)
+            let vy = Float(b._velocity.dy * SKPhysicsBody.appleVelocityScale)
+            B2.setVelocity(b.bodyId, vx, vy)
             b.velocityDirty = false
+            for j in joints where (j is SKPhysicsJointPin || j is SKPhysicsJointFixed) {
+                let other: SKPhysicsBody?
+                if j.bodyA === b { other = j.bodyB }
+                else if j.bodyB === b { other = j.bodyA }
+                else { other = nil }
+                guard let n = other, n.bodyId >= 0, !n.velocityDirty else { continue }
+                B2.setVelocity(n.bodyId, vx, vy)
+                B2.setAngularVelocity(n.bodyId, 0)
+            }
         }
         for (_, b) in SKPhysicsWorld.registry where b.angularDirty {
             B2.setAngularVelocity(b.bodyId, Float(b.angularVelocity))

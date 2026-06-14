@@ -231,7 +231,18 @@ open class SKNode {
         // backgroundNode/thumbNode) hit under both versions, so capture is kept.
         var hits: [SKNode] = []
         collectNodes(at: p, into: &hits)
-        return hits.sorted { $0.zPosition > $1.zPosition }
+        // Frontmost first, like SpriteKit's atPoint: higher zPosition wins; for
+        // EQUAL zPosition the LATER-collected node (later in the tree = drawn on
+        // top) wins. The fire HUD stacks fire-* over hud-* at the same z; the
+        // game checks atPoint(...).name == "fire-*", so the last-drawn fire-*
+        // must come first, not whatever node happened to be collected earliest.
+        return hits.enumerated()
+            .sorted { a, b in
+                a.element.zPosition != b.element.zPosition
+                    ? a.element.zPosition > b.element.zPosition
+                    : a.offset > b.offset
+            }
+            .map { $0.element }
     }
     private func collectNodes(at p: CGPoint, into hits: inout [SKNode]) {
         for c in children {
