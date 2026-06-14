@@ -55,6 +55,10 @@ bool wasm_runtime_call_wasm_a(wasm_exec_env_t exec_env, wasm_function_inst_t fun
 
 const char* wasm_runtime_get_exception(wasm_module_inst_t inst);
 
+// Dumps the trapped wasm call stack to stdout. Requires WAMR built with
+// WAMR_BUILD_DUMP_CALL_STACK=1 (+ CUSTOM_NAME_SECTION for Swift symbol names).
+void wasm_runtime_dump_call_stack(wasm_exec_env_t exec_env);
+
 #ifdef __cplusplus
 }
 #endif

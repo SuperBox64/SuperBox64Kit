@@ -289,6 +289,11 @@ public final class SKTextureAtlas {
 public final class CIFilter {
     public let name: String
     public var inputRadius: CGFloat = 0
+    #if hasFeature(Embedded)
+    // Embedded Swift has no `Any`, so the [String: Any] parameter form can't
+    // exist here; expose the plain initializer (set inputRadius directly).
+    public init?(name: String) { self.name = name }
+    #else
     public init?(name: String, parameters: [String: Any]? = nil) {
         self.name = name
         // Game code passes a mixed-type dict (Float/CGFloat/Double); read the
@@ -300,6 +305,7 @@ public final class CIFilter {
             else if let r = v as? Int { inputRadius = CGFloat(r) }
         }
     }
+    #endif
 }
 
 public class SKEffectNode: SKNode {

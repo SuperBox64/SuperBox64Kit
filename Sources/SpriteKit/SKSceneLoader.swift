@@ -203,12 +203,21 @@ public enum SKSceneLoader {
                             // does NO numeric coercion through as?), so every angled
                             // tile branch silently no-op'd and platforms drew as plain
                             // squares. Store integral numbers as UInt32 so the casts hit.
+                            #if hasFeature(Embedded)
+                            if let b = v.boolValue        { dict[k] = .bool(b) }
+                            else if let d = v.doubleValue {
+                                if d >= 0, d <= Double(UInt32.max), d == d.rounded() { dict[k] = .uint32(UInt32(d)) }
+                                else { dict[k] = .double(d) }
+                            }
+                            else if let s = v.stringValue { dict[k] = .string(s) }
+                            #else
                             if let b = v.boolValue        { dict[k] = b }
                             else if let d = v.doubleValue {
                                 if d >= 0, d <= Double(UInt32.max), d == d.rounded() { dict[k] = UInt32(d) }
                                 else { dict[k] = d }
                             }
                             else if let s = v.stringValue { dict[k] = s }
+                            #endif
                         }
                         def.userData = dict
                     }

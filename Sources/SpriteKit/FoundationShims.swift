@@ -151,6 +151,18 @@ public final class NotificationCenter {
 // MARK: - NSMutableDictionary (SKNode.userData's Apple type)
 
 public final class NSMutableDictionary {
+    #if hasFeature(Embedded)
+    // Embedded Swift has no `Any`; back the dictionary with a small typed union
+    // covering what the scene loader writes (bool/double/string tile userData).
+    public enum Value { case bool(Bool); case uint32(UInt32); case double(Double); case string(String) }
+    private var storage: [String: Value] = [:]
+    public init() {}
+    public var count: Int { storage.count }
+    public subscript(key: String) -> Value? {
+        get { storage[key] }
+        set { storage[key] = newValue }
+    }
+    #else
     private var storage: [String: Any] = [:]
     public init() {}
     public var count: Int { storage.count }
@@ -158,6 +170,7 @@ public final class NSMutableDictionary {
         get { storage[key] }
         set { storage[key] = newValue }
     }
+    #endif
 }
 
 #if hasFeature(Embedded)

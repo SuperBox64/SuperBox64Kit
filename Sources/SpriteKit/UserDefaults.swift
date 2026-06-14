@@ -36,7 +36,16 @@ public final class UserDefaults {
     public func set(_ value: Double, forKey key: String) { LocalStore.setString(String(value), forKey: key) }
     public func set(_ value: Float, forKey key: String)  { LocalStore.setString(String(value), forKey: key) }
     public func set(_ value: String, forKey key: String) { LocalStore.setString(value, forKey: key) }
-    // KVC-style setValue (Apple takes Any?); route to the typed setters.
+    // KVC-style setValue. Typed overloads so callers resolve to a concrete
+    // method (and Embedded Swift, which has no `Any`, still compiles). A game's
+    // `setValue(someInt, forKey:)` binds to the Int overload in both modes.
+    public func setValue(_ value: Int, forKey key: String)    { set(value, forKey: key) }
+    public func setValue(_ value: Bool, forKey key: String)   { set(value, forKey: key) }
+    public func setValue(_ value: Double, forKey key: String) { set(value, forKey: key) }
+    public func setValue(_ value: Float, forKey key: String)  { set(value, forKey: key) }
+    public func setValue(_ value: String, forKey key: String) { set(value, forKey: key) }
+    #if !hasFeature(Embedded)
+    // Apple's KVC takes Any?; full-Swift builds keep it for source parity.
     public func setValue(_ value: Any?, forKey key: String) {
         switch value {
         case let s as String: LocalStore.setString(s, forKey: key)
@@ -47,6 +56,7 @@ public final class UserDefaults {
         default: break
         }
     }
+    #endif
 
     public func removeObject(forKey key: String) { LocalStore.setString("", forKey: key) }
     public func synchronize() -> Bool { true }
