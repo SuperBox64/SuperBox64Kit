@@ -26,6 +26,29 @@ func sb64AppleCollisionFilter(_ sa: b2ShapeId, _ sb: b2ShapeId, _ ctx: UnsafeMut
         || (pb.categoryBitMask & pa.collisionBitMask) != 0
 }
 
+// Apple-faithful restitution mixing. Box2D v3's DEFAULT mix is
+// b2MaxFloat(restitutionA, restitutionB) (see CBox2D src/world.c
+// b2DefaultRestitutionCallback), so a restitution-0 body STILL bounces off any
+// boundary whose restitution is non-zero — e.g. UFO Emoji's laser (restitution
+// 0) bouncing off a border. SpriteKit (whose physics is Box2D-derived) does NOT
+// do this: when EITHER body's restitution is 0 the collision is effectively
+// dead — the laser stops at the boundary instead of springing back. We install
+// this callback (b2World_SetRestitutionCallback / def.restitutionCallback) so a
+// 0 on either side yields 0 (no bounce off ANY boundary), while two genuinely
+// bouncy bodies still combine via MAX exactly like Box2D's default — so DaBomb
+// (restitution 0.5) and the 0.2 rock bounds keep bouncing. This is the precise,
+// per-contact lever the engine provides for this mismatch; the global
+// restitutionThreshold can't express it (a 0-restitution contact never bounces
+// regardless of threshold, but a non-zero one bounces once it clears the
+// threshold — so the threshold can't single out "either side is 0").
+// Signature matches b2RestitutionCallback (float, int, float, int) — the int
+// args are per-shape material ids, ignored here. @convention(c) so it can be
+// handed to Box2D as a raw C function pointer (def.restitutionCallback).
+let sb64AppleRestitutionMix: @convention(c) (Float, Int32, Float, Int32) -> Float = { ra, _, rb, _ in
+    if ra == 0 || rb == 0 { return 0 }
+    return ra > rb ? ra : rb
+}
+
 // MARK: - Box2D v3 backend (replaces the C++ cbox2d bridge; Swift calls C directly)
 
 // Coordinates are SpriteKit points treated as Box2D length units. Telling Box2D
@@ -59,16 +82,21 @@ enum B2 {
         def.gravity = b2Vec2(x: gx * 150.0, y: gy * 150.0)
         def.enableSleep = false
         def.maximumLinearSpeed = 4000.0
-        // Restitution threshold: contacts slower than this don't bounce. The kit
-        // had it at 0 (EVERYTHING bounces, even micro-velocities), so a body on a
-        // bouncy tile never settled — the unicorn hero bounced/skittered off its
-        // floating platform, and the laser (restitution 0, but Box2D combines
-        // restitution via MAX with the wall's value, unlike SpriteKit's gentler
-        // combine) bounced off the screen walls instead of stopping. A high
-        // threshold (above the laser's ~750 pt/s) suppresses these spurious
-        // bounces so bodies rest and the laser stops — matching SpriteKit, whose
-        // effective restitution for this game is near zero.
-        def.restitutionThreshold = 1000.0
+        // Apple-faithful restitution mixing (see sb64AppleRestitutionMix): a body
+        // with restitution 0 (the laser) never bounces off ANY boundary, while
+        // two bouncy bodies still combine via MAX like Box2D's default. This is
+        // the real fix for the laser bouncing off its removal border — Box2D's
+        // default MAX mix let the 0-restitution laser inherit the border's
+        // bounciness, unlike SpriteKit.
+        def.restitutionCallback = sb64AppleRestitutionMix
+        // Restitution threshold: contacts slower than this don't bounce (Box2D
+        // uses it to kill jitter on resting stacks). The kit briefly forced this
+        // to 1000 to mask the laser bounce, but with the mixing callback above the
+        // laser contact is genuinely 0-restitution (skipped entirely, threshold
+        // irrelevant), so we restore Box2D's sane default — 1 m/s × 150 pts/m =
+        // 150 pts/s. A 1000-pt/s threshold also wrongly suppressed legitimately
+        // bouncy fast collisions (DaBomb restitution 0.5, the 0.2 rock bounds).
+        def.restitutionThreshold = 150.0
         world = b2CreateWorld(&def)
         bodies.removeAll()
         joints.removeAll()

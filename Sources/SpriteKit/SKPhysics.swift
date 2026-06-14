@@ -289,10 +289,21 @@ public final class SKPhysicsBody {
         // body never moves, so letting it accept every collision makes the
         // dynamic body's own collisionMask the sole decider — matching SpriteKit
         // for dynamic-vs-static (platforms/walls). A collisionMask==0 STATIC body
-        // stays solid (the world edge loop); only a dynamic collisionMask==0 body
-        // is approximated as a sensor.
+        // is solid IFF it's a pure wall (the world edge loop, contactTest==0);
+        // only a dynamic collisionMask==0 body is otherwise approximated as a sensor.
         let mask = dyn ? collisionBitMask : UInt32(0xFFFFFFFF)
-        let sensor = isSensor || (collisionBitMask == 0 && dyn)
+        // Apple's collisionBitMask==0 means "never impart a bounce." A STATIC
+        // collisionMask==0 body that ALSO opts into contact callbacks
+        // (contactTestBitMask != 0) is a pure DETECTOR volume — Apple removes the
+        // laser at the boundary via the contact callback and never bounces it.
+        // UFO Emoji's laserBorder is exactly this (collision 0, contactTest laserbeam):
+        // making it a Box2D sensor lets the laser fly through and be removed by the
+        // didBegin handler, instead of the solid edge stopping/bouncing it (a fast
+        // laser, 750 + hero speed up to 1250 pt/s, defeated the restitutionThreshold
+        // hack). A static collisionMask==0 body with NO contactTest (the world
+        // gameBounds wall) stays SOLID so the hero is still contained one-way.
+        let staticDetector = !dyn && collisionBitMask == 0 && contactTestBitMask != 0
+        let sensor = isSensor || (collisionBitMask == 0 && dyn) || staticDetector
         // Apple honors these per body; hand them to the next B2 creation.
         B2.pendingProps = B2.BodyProps(friction: Float(friction),
                                        restitution: Float(restitution),
@@ -376,7 +387,10 @@ public final class SKPhysicsBody {
     func syncFilter() {
         let dyn = isDynamic
         let mask = dyn ? collisionBitMask : UInt32(0xFFFFFFFF)
-        let sensor = isSensor || (collisionBitMask == 0 && dyn)
+        // Mirror createInWorld() EXACTLY: a static detector (collision 0 +
+        // contactTest set, e.g. the laserBorder) is a sensor so it never bounces.
+        let staticDetector = !dyn && collisionBitMask == 0 && contactTestBitMask != 0
+        let sensor = isSensor || (collisionBitMask == 0 && dyn) || staticDetector
         B2.setFilter(bodyId, categoryBitMask, mask, sensor)
     }
 
