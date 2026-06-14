@@ -330,8 +330,15 @@ public final class SKPhysicsBody {
         // sensor shapes contribute no mass, so without this a sensor-only ship
         // sits at the 1kg fallback and applyForce barely moves it.
         if bodyId >= 0, dyn {
-            let m = massExplicit ? mass : CGFloat(appleAreaPts2() / 22500.0)
-            if m > 0 { B2.setMass(bodyId, Float(m), Float(boundingRadius())) }
+            // Box2D v3: a DYNAMIC body with zero mass is physically undefined and
+            // its position is NOT integrated from linear velocity — so the laser
+            // (mass 0, density 0, velocity 750) just sat at its spawn, piling up
+            // (laser-vs-laser contacts) and never reaching grass/baddies.
+            // SpriteKit happily moves a mass-0 body; mirror that by ALWAYS giving a
+            // dynamic body a positive mass (floor it) so Box2D integrates velocity.
+            var m = massExplicit ? mass : CGFloat(appleAreaPts2() / 22500.0)
+            if m <= 0 { m = max(0.01, CGFloat(appleAreaPts2() / 22500.0)) }
+            B2.setMass(bodyId, Float(m), Float(boundingRadius()))
         }
         SKPhysicsWorld.registry[bodyId] = self
         // TEMP laser diagnostic — categoryBitMask 64 == laserbeam. Tells us if the
