@@ -577,7 +577,7 @@ public final class SKPhysicsWorld {
     // can see where the physics shapes actually sit relative to the
     // sprites. OFF by default to match Apple SpriteKit (SKView.showsPhysics
     // is false by default); opt in via scene.physicsWorld.showsPhysics = true.
-    public var showsPhysics: Bool = false  // OFF by default like SKView.showsPhysics; opt in via physicsWorld.showsPhysics = true
+    public var showsPhysics: Bool = true   // TEMP: on for debugging the unicorn/platform collision — strokes every Box2D body outline
 
     // Walks every body in the registry and strokes its shape on the
     // active draw target. Called from SKView.render after the scene
