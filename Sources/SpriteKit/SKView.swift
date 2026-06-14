@@ -204,7 +204,11 @@ public class SKView: UIView {
     // The interaction-enabled node that captured the current touch sequence (the
     // joystick while you drag it). nil = the touch goes to the scene. SpriteKit
     // delivers an entire began→moved→ended sequence to the node hit on began.
+    #if hasFeature(Embedded)
+    private unowned(unsafe) var _capturedTouchNode: SKNode?
+    #else
     private weak var _capturedTouchNode: SKNode?
+    #endif
 
     private func dispatchTouches(_ phase: UITouchPhase, at world: CGPoint, to s: SKScene) {
         let t = UITouch()

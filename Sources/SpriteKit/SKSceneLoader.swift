@@ -196,8 +196,18 @@ public enum SKSceneLoader {
                     if let ud = cell["userData"]?.objectValue, !ud.isEmpty {
                         let dict = NSMutableDictionary()
                         for (k, v) in ud {
+                            // The game reads tile userData numbers (e.g. "sector",
+                            // which gates every 45° corner/slope/end tile spawn) ONLY
+                            // as `as? UInt32`. NSMutableDictionary is a [String:Any]
+                            // shim, and a Double-boxed value fails `as? UInt32` (Swift
+                            // does NO numeric coercion through as?), so every angled
+                            // tile branch silently no-op'd and platforms drew as plain
+                            // squares. Store integral numbers as UInt32 so the casts hit.
                             if let b = v.boolValue        { dict[k] = b }
-                            else if let d = v.doubleValue { dict[k] = d }
+                            else if let d = v.doubleValue {
+                                if d >= 0, d <= Double(UInt32.max), d == d.rounded() { dict[k] = UInt32(d) }
+                                else { dict[k] = d }
+                            }
                             else if let s = v.stringValue { dict[k] = s }
                         }
                         def.userData = dict

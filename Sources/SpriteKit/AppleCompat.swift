@@ -345,7 +345,11 @@ public final class CADisplayLink {
         didSet { if isPaused { unregister() } else if registered == false && tick != nil { register() } }
     }
     public var preferredFramesPerSecond = 60
+    #if hasFeature(Embedded)
+    unowned(unsafe) var target: AnyObject?
+    #else
     weak var target: AnyObject?
+    #endif
     var selector: Selector?
     private var tick: (() -> Void)?
     private var registered = false
@@ -363,10 +367,19 @@ public final class CADisplayLink {
     private func register() {
         guard registered == false else { return }
         registered = true
+        #if hasFeature(Embedded)
+        // Embedded Swift has no `weak`; the hook still self-guards via `alive`,
+        // and a CADisplayLink lives for its driver's lifetime (never freed mid-run).
+        KitRunLoop.addPerFrameHook { [unowned(unsafe) self] in
+            guard self.alive, self.isPaused == false else { return }
+            self.tick?()
+        }
+        #else
         KitRunLoop.addPerFrameHook { [weak self] in
             guard let self = self, self.alive, self.isPaused == false else { return }
             self.tick?()
         }
+        #endif
     }
     private func unregister() { /* hook self-guards via `alive`/`isPaused` */ }
 

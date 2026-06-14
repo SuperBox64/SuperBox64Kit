@@ -73,11 +73,51 @@ open class SKScene: SKNode {
     // this equals renderTree minus that one subtree.
     func renderWorld(skipping skip: SKNode?, parentAlpha: CGFloat) {
         let eff = parentAlpha * alpha
-        var vis: [SKNode] = []
-        vis.reserveCapacity(children.count)
-        for c in children where c !== skip && !c.isHidden && c.alpha > 0 { vis.append(c) }
-        if vis.count > 1 { vis.sort { $0.zPosition < $1.zPosition } }
-        for c in vis { c.renderTree(parentAlpha: eff) }
+        // SpriteKit renders by GLOBAL accumulated zPosition — a node's render order
+        // is the SUM of its own and all ancestor zPositions, NOT a per-parent sort.
+        // That's why a laser at z=-100 (a SCENE child) draws ABOVE the parallax at
+        // z=-243 (a WORLD child) yet BELOW the tiles at z=10, while the hero's face
+        // child (z=24) still sits on the hero (z=150 -> 174). The old per-parent
+        // sort drew the whole world (with its full-screen parallax) on top of the
+        // laser, hiding it. Flatten the tree (skip the camera subtree — that's the
+        // HUD pass), sort by accumulated z, draw each node's OWN content at its
+        // absolute transform.
+        var flat: [(node: SKNode, z: CGFloat, a: CGFloat, order: Int)] = []
+        var counter = 0
+        func collect(_ n: SKNode, _ accZ: CGFloat, _ accA: CGFloat, _ wx: CGFloat, _ wy: CGFloat) {
+            if n === skip || n.isHidden || n.alpha <= 0 { return }
+            let z = accZ + n.zPosition
+            let a = accA * n.alpha
+            let nx = wx + n.position.x, ny = wy + n.position.y
+            var visible = true
+            if let cull = SKNode._cullRect {
+                let ext = n._cullExtent
+                if ext > 0 {
+                    let r = CGRect(x: nx - ext, y: ny - ext, width: ext * 2, height: ext * 2)
+                    if !r.intersects(cull) { visible = false }
+                }
+            }
+            if visible { flat.append((n, z, a, counter)); counter += 1 }
+            for c in n.children { collect(c, z, a, nx, ny) }
+        }
+        for c in children where c !== skip { collect(c, 0, eff, 0, 0) }
+        flat.sort { $0.z != $1.z ? $0.z < $1.z : $0.order < $1.order }
+        for item in flat {
+            gfx_save()
+            // Re-apply the transform chain from this scene's child down to the node
+            // (matches SKNode.renderTree's translate->rotate->scale per level) so the
+            // node draws at its true absolute position/rotation/scale.
+            var chain: [SKNode] = []
+            var cur: SKNode? = item.node
+            while let n = cur, n !== self { chain.append(n); cur = n.parent }
+            for n in chain.reversed() {
+                gfx_translate(Float(n.position.x), Float(n.position.y))
+                if n.zRotation != 0 { gfx_rotate(Float(n.zRotation * 180.0 / Double.pi)) }
+                if n.xScale != 1 || n.yScale != 1 { gfx_scale(Float(n.xScale), Float(n.yScale)) }
+            }
+            item.node.draw(alpha: item.a)
+            gfx_restore()
+        }
     }
 }
 

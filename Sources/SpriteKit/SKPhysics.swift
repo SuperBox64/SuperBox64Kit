@@ -254,7 +254,12 @@ public final class SKPhysicsBody {
 
     func createInWorld() {
         guard bodyId < 0, let n = node else { return }
-        let x = Float(n.position.x), y = Float(n.position.y)
+        // Spawn at the node's ABSOLUTE scene position (see the per-frame transform
+        // push in SKPhysics.step): a body under a moving parent — e.g. UFO Emoji's
+        // camera-tracked laserBorder — must enter the flat Box2D world where it
+        // actually is, not at its parent-local offset.
+        let ap = n.absolutePosition()
+        let x = Float(ap.x), y = Float(ap.y)
         let cat = categoryBitMask
         // Apple SpriteKit has two independent filters: collisionBitMask gates
         // physical bounce, contactTestBitMask gates the didBegin callback (OR'd
@@ -341,12 +346,6 @@ public final class SKPhysicsBody {
             B2.setMass(bodyId, Float(m), Float(boundingRadius()))
         }
         SKPhysicsWorld.registry[bodyId] = self
-        // TEMP laser diagnostic — categoryBitMask 64 == laserbeam. Tells us if the
-        // projectile body is actually created (id>=0), its shape/size, and the
-        // velocity it carries from the copy().
-        if categoryBitMask == 64 {
-            _dbgLog("LASER body id=\(bodyId) shape=\(shape) pos=(\(Int(x)),\(Int(y))) dyn=\(dyn) sensor=\(sensor) v=(\(Int(_velocity.dx)),\(Int(_velocity.dy)))")
-        }
     }
 
     // Re-push Apple's collision filter to the live Box2D body when the game
@@ -867,7 +866,21 @@ public final class SKPhysicsWorld {
                 orphaned.append(id)
                 continue
             }
-            B2.setTransform(id, Float(n.position.x), Float(n.position.y),
+            // Box2D is one flat world, so a body must sit at its node's ABSOLUTE
+            // scene position — not its parent-local `position`. Most game bodies
+            // live at the scene root (local == absolute) or under an origin-pinned
+            // container (local ≈ absolute), so the old local shortcut happened to
+            // work for them. But a body parented to a MOVING node breaks: UFO
+            // Emoji's laserBorder edge-loop is a CAMERA child and the camera tracks
+            // the hero (cam.position.x = hero.x). With local position the border
+            // stayed frozen at the world origin while the hero/laser flew off to
+            // large x — so a fired laser (whose ONLY collisionBitMask is the
+            // laserBorder) either got destroyed by the stale origin-centered border
+            // before it reached any target, or fired entirely outside it; the laser
+            // "did nothing". absolutePosition() walks the parent chain so the border
+            // follows the camera, exactly like Apple SpriteKit's implicit sync.
+            let p = n.absolutePosition()
+            B2.setTransform(id, Float(p.x), Float(p.y),
                             Float(n.zRotation))
         }
         // A registry body whose weak SKNode has left the scene is an orphan:
@@ -886,8 +899,16 @@ public final class SKPhysicsWorld {
         for (id, b) in SKPhysicsWorld.registry {
             guard b.isDynamic, let n = b.node else { continue }
             let (x, y) = B2.getPosition(id)
-            if abs(n.position.x - CGFloat(x)) > 0.001 || abs(n.position.y - CGFloat(y)) > 0.001 {
-                n.position = CGPoint(x: CGFloat(x), y: CGFloat(y))
+            // Box2D positions are ABSOLUTE (we push absolutePosition() in above),
+            // so convert back to the node's PARENT-LOCAL frame before writing
+            // `position`. For scene-root / origin-pinned bodies the parent origin
+            // is (0,0) so this is a no-op; for a dynamic body under a moving parent
+            // it keeps the round-trip exact instead of teleporting it by the
+            // parent's offset every frame.
+            let off = n.parent?.absolutePosition() ?? .zero
+            let lx = CGFloat(x) - off.x, ly = CGFloat(y) - off.y
+            if abs(n.position.x - lx) > 0.001 || abs(n.position.y - ly) > 0.001 {
+                n.position = CGPoint(x: lx, y: ly)
             }
             if b.allowsRotation {
                 let a = CGFloat(B2.getAngle(id))
@@ -898,10 +919,6 @@ public final class SKPhysicsWorld {
             guard let A = SKPhysicsWorld.registry[c.bodyA], let B = SKPhysicsWorld.registry[c.bodyB] else { continue }
             let hit = (A.categoryBitMask & B.contactTestBitMask) != 0
                    || (B.categoryBitMask & A.contactTestBitMask) != 0
-            // TEMP laser diagnostic: report any contact involving a laserbeam body.
-            if A.categoryBitMask == 64 || B.categoryBitMask == 64 {
-                _dbgLog("LASER contact catA=\(A.categoryBitMask) catB=\(B.categoryBitMask) hit=\(hit)")
-            }
             if hit { contactDelegate?.didBegin(SKPhysicsContact(A, B)) }
         }
     }
