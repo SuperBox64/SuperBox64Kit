@@ -36,6 +36,17 @@ public final class UserDefaults {
     public func set(_ value: Double, forKey key: String) { LocalStore.setString(String(value), forKey: key) }
     public func set(_ value: Float, forKey key: String)  { LocalStore.setString(String(value), forKey: key) }
     public func set(_ value: String, forKey key: String) { LocalStore.setString(value, forKey: key) }
+    // KVC-style setValue (Apple takes Any?); route to the typed setters.
+    public func setValue(_ value: Any?, forKey key: String) {
+        switch value {
+        case let s as String: LocalStore.setString(s, forKey: key)
+        case let b as Bool:   LocalStore.setString(b ? "1" : "0", forKey: key)
+        case let i as Int:    LocalStore.setString(String(i), forKey: key)
+        case let d as Double: LocalStore.setString(String(d), forKey: key)
+        case let f as Float:  LocalStore.setString(String(f), forKey: key)
+        default: break
+        }
+    }
 
     public func removeObject(forKey key: String) { LocalStore.setString("", forKey: key) }
     public func synchronize() -> Bool { true }

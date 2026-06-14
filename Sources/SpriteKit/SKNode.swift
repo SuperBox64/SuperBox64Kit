@@ -1,5 +1,7 @@
 import KitABI
 
+@inline(never) func _dbgLog(_ s: String) { withUTF8Ptr(s) { js_log($0, $1) } }
+
 // SpriteKit node. World space is y-up (SpriteKit); the SKView root flips it onto
 // the kit's y-down Canvas2D. Transforms map to gfx_save/translate/rotate/scale.
 open class SKNode {
@@ -44,6 +46,34 @@ open class SKNode {
         yScale = s
     }
 
+    // Apple's NSCopying-style deep copy. Subclasses override to clone their own
+    // state (SKSpriteNode below). Children are cloned recursively so
+    // `node.copy() as! SKSpriteNode` returns an independent subtree.
+    open func copy() -> SKNode {
+        let n = SKNode()
+        n.position = position; n.zPosition = zPosition; n.zRotation = zRotation
+        n.xScale = xScale; n.yScale = yScale; n.alpha = alpha
+        n.name = name; n.isHidden = isHidden; n.speed = speed
+        for c in children { n.addChild(c.copy()) }
+        return n
+    }
+
+    // iOS UIResponder touch surface. On Apple, SKNode: UIResponder; here we vend
+    // the same overridable hooks so interactive nodes (GTFlightYoke, HUD fire
+    // buttons, GameScene) keep their `override func touchesBegan(_:with:)` etc.
+    // The scene's pollEvents synthesizes a UITouch and dispatches to these.
+    // Default forwards the touch UP the responder chain (to the parent node),
+    // exactly like UIResponder/SKNode on Apple. This is what lets an
+    // interaction-enabled node that DOESN'T override the hook (the HUD fire
+    // buttons) pass the touch on to the scene, whose touchesBegan dispatches via
+    // atPoint(). The scene is the top SKNode responder (parent == nil), so the
+    // walk terminates there — no infinite loop even when the scene's override
+    // calls super.touchesBegan(...).
+    open func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) { parent?.touchesBegan(touches, with: event) }
+    open func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) { parent?.touchesMoved(touches, with: event) }
+    open func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { parent?.touchesEnded(touches, with: event) }
+    open func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { parent?.touchesCancelled(touches, with: event) }
+
     open func addChild(_ node: SKNode) {
         node.parent = self
         children.append(node)
@@ -58,15 +88,9 @@ open class SKNode {
         // Embedded, parent is unowned(unsafe), so a destroyed parent must
         // clear the back-pointers or a later removeFromParent walks freed
         // memory. The body's node pointer dangles the same way.
-        #if hasFeature(Embedded)
+        // Nonisolated kit on single-threaded wasm — clean up directly.
         for c in children { c.parent = nil }
         physicsBody?.node = nil
-        #else
-        MainActor.assumeIsolated {
-            for c in children { c.parent = nil }
-            physicsBody?.node = nil
-        }
-        #endif
     }
 
     open func removeFromParent() {
@@ -97,7 +121,21 @@ open class SKNode {
         }
         for c in children { c.teardownPhysics() }
     }
-    public func childNode(withName name: String) -> SKNode? { children.first { $0.name == name } }
+    public func childNode(withName name: String) -> SKNode? {
+        // Apple's "//name" prefix = recursive descendant search (GameWorld uses it
+        // to find SKTileMapNode layers nested under a reference node's scene).
+        if name.hasPrefix("//") {
+            return descendantNamed(String(name.dropFirst(2)))
+        }
+        return children.first { $0.name == name }
+    }
+    private func descendantNamed(_ name: String) -> SKNode? {
+        for c in children {
+            if c.name == name { return c }
+            if let found = c.descendantNamed(name) { return found }
+        }
+        return nil
+    }
     public func contains(_ node: SKNode) -> Bool { children.contains { $0 === node } }
 
     // Swift-friendly enumeration over children (and descendants) matching a name.
@@ -118,7 +156,9 @@ open class SKNode {
         }
     }
 
-    public var scene: SKScene? { (self as? SKScene) ?? parent?.scene }
+    public var scene: SKScene? {
+        return (self as? SKScene) ?? parent?.scene
+    }
 
     public var isUserInteractionEnabled = false
 
@@ -182,13 +222,97 @@ open class SKNode {
         nodes(at: p).first ?? self
     }
     public func nodes(at p: CGPoint) -> [SKNode] {
+        // `p` is in THIS node's coordinate space. A child's `frame` is in this
+        // same (parent) space, so test it against `p` directly; only convert into
+        // the child's LOCAL space when descending to ITS children. The old code
+        // subtracted c.position AND tested c.frame (which already includes
+        // c.position), double-counting position so any off-origin node (menu
+        // arrows, rotated fire HUD) never hit. Nodes at local (0,0) (the joystick
+        // backgroundNode/thumbNode) hit under both versions, so capture is kept.
         var hits: [SKNode] = []
-        if frame.contains(p) { hits.append(self) }
-        for c in children {
-            let lp = CGPoint(x: p.x - c.position.x, y: p.y - c.position.y)
-            hits.append(contentsOf: c.nodes(at: lp))
-        }
+        collectNodes(at: p, into: &hits)
         return hits.sorted { $0.zPosition > $1.zPosition }
+    }
+    private func collectNodes(at p: CGPoint, into hits: inout [SKNode]) {
+        for c in children {
+            if c.frame.contains(p) { hits.append(c) }
+            c.collectNodes(at: c._pointFromParent(p), into: &hits)
+        }
+    }
+
+    // Convert a point from this node's PARENT coordinate space into this node's
+    // LOCAL space — the inverse of the node's transform (translate · rotate ·
+    // scale). nodes(at:)/hit-testing recurse with this so a rotated/scaled node
+    // (the π/4 fire HUD) hit-tests where it actually drew, not where an
+    // axis-aligned box would be.
+    func _pointFromParent(_ p: CGPoint) -> CGPoint {
+        var q = CGPoint(x: p.x - position.x, y: p.y - position.y)
+        if zRotation != 0 {
+            let cs = cos(-zRotation), sn = sin(-zRotation)
+            q = CGPoint(x: q.x * cs - q.y * sn, y: q.x * sn + q.y * cs)
+        }
+        if xScale != 0, xScale != 1 { q.x /= xScale }
+        if yScale != 0, yScale != 1 { q.y /= yScale }
+        return q
+    }
+
+    // True if `ancestor` is somewhere above this node in the tree.
+    func isUnder(_ ancestor: SKNode) -> Bool {
+        var n: SKNode? = parent
+        while let cur = n { if cur === ancestor { return true }; n = cur.parent }
+        return false
+    }
+
+    // Convert a SCENE/WORLD-space point into this node's local space, honoring
+    // the SKCameraNode quirk: a camera's children are screen-fixed (the render
+    // ignores cam.position for them), so for a node under the camera we strip the
+    // camera offset (world − cam.position) and then apply the inverse transforms
+    // of every node from the camera's direct child down to self. Used by
+    // UITouch.location(in:) so `touch.location(in: joystick)` returns the
+    // joystick-local offset the stick math expects.
+    func convertFromWorld(_ world: CGPoint) -> CGPoint {
+        if self is SKScene { return world }
+        // chain: self up to (not including) the scene, then reversed to top-down.
+        var chain: [SKNode] = []
+        var n: SKNode? = self
+        while let cur = n, !(cur is SKScene) { chain.append(cur); n = cur.parent }
+        chain.reverse()
+        var p = world
+        var start = 0
+        if let cam = scene?.camera, isUnder(cam) || self === cam {
+            p = CGPoint(x: world.x - cam.position.x, y: world.y - cam.position.y)
+            if let ci = chain.firstIndex(where: { $0 === cam }) { start = ci + 1 }
+        }
+        for i in start..<chain.count { p = chain[i]._pointFromParent(p) }
+        return p
+    }
+
+    // Apple's hit-testing for touch delivery: find the deepest VISUAL node under
+    // the world point, then walk UP to the first interaction-enabled ancestor
+    // (a node with isUserInteractionEnabled but a zero own-frame — GTFlightYoke —
+    // still receives the touch via its child's hit). Returns nil when nothing
+    // interactive is hit, so the caller falls back to the scene.
+    func deepestInteractiveNode(at world: CGPoint) -> SKNode? {
+        let p = (self is SKScene) ? world : convertFromWorld(world)
+        let hits = nodes(at: p)
+        // DEBUG: dump what's under the pointer so we can see why the joystick/fire
+        // are or aren't captured.
+        var dbg = ""
+        for h in hits.prefix(8) { dbg += (h.name ?? "?") + "(z\(Int(h.zPosition)),i\(h.isUserInteractionEnabled ? 1 : 0)) " }
+        _dbgLog("hits@\(Int(p.x)),\(Int(p.y)): \(dbg)")
+        // Walk UP from EACH hit (top-z first) to the first interaction-enabled
+        // ancestor. The old code only walked up from hits.first, so if the
+        // top-z node under the pointer was non-interactive (a tile/overlay) it
+        // returned nil even though the joystick/HUD button was also hit lower in
+        // the z-order — that was the cap=nil joystick/fire failure.
+        for hit in hits {
+            var cur: SKNode? = hit
+            while let c = cur {
+                if c.isUserInteractionEnabled && !(c is SKScene) { return c }
+                cur = c.parent
+            }
+        }
+        return nil
     }
     public func intersects(_ other: SKNode) -> Bool {
         frame.intersects(other.frame)
@@ -197,9 +321,24 @@ open class SKNode {
     // ---- rendering ----
     func draw(alpha: CGFloat) {}   // overridden by leaf nodes
 
-    func renderTree(parentAlpha: CGFloat) {
+    // Viewport (world space) the world pass is allowed to draw in. Set by
+    // SKView.render before the world pass and cleared (nil) for the screen-fixed
+    // camera-children pass and for offscreen texture bakes. When non-nil, a
+    // drawable leaf whose world AABB falls entirely outside is skipped — this is
+    // what stops a wide side-scroller from drawing the ENTIRE level every frame
+    // (the difference between single-digit and full fps once actors spread out).
+    nonisolated(unsafe) static var _cullRect: CGRect? = nil
+    // Half-extent of this node's own drawable content, for cheap culling without
+    // measuring. 0 = never cull this node (containers/shapes always draw).
+    var _cullExtent: CGFloat { 0 }
+
+    func renderTree(parentAlpha: CGFloat, worldX: CGFloat = 0, worldY: CGFloat = 0) {
         if isHidden || alpha <= 0 { return }
         let eff = parentAlpha * alpha
+        // World coord of this node's origin (approximate: ignores ancestor
+        // rotation/scale, which is fine for the non-rotated world layers we cull;
+        // the rotated HUD draws in the camera pass with culling off).
+        let wx = worldX + position.x, wy = worldY + position.y
         gfx_save()
         gfx_translate(Float(position.x), Float(position.y))
         // We're rendering inside the SKView's outer scale(1,-1) Y-flip, so
@@ -210,7 +349,16 @@ open class SKNode {
         // the rendered heading only with the sign unchanged.
         if zRotation != 0 { gfx_rotate(Float(zRotation * 180.0 / Double.pi)) }
         if xScale != 1 || yScale != 1 { gfx_scale(Float(xScale), Float(yScale)) }
-        draw(alpha: eff)
+        // Cull this node's own draw if it's a sizable leaf fully off-screen.
+        var doDraw = true
+        if let cull = SKNode._cullRect {
+            let ext = _cullExtent
+            if ext > 0 {
+                let r = CGRect(x: wx - ext, y: wy - ext, width: ext * 2, height: ext * 2)
+                if !r.intersects(cull) { doDraw = false }
+            }
+        }
+        if doDraw { draw(alpha: eff) }
         // Hidden children no-op in their own renderTree anyway; dropping them
         // BEFORE the z-sort keeps the per-frame sort at the visible count (a 3D
         // scene pools hundreds of hidden billboards under one layer).
@@ -219,9 +367,9 @@ open class SKNode {
             vis.reserveCapacity(children.count)
             for c in children where !c.isHidden && c.alpha > 0 { vis.append(c) }
             if vis.count > 1 { vis.sort { $0.zPosition < $1.zPosition } }
-            for c in vis { c.renderTree(parentAlpha: eff) }
+            for c in vis { c.renderTree(parentAlpha: eff, worldX: wx, worldY: wy) }
         } else {
-            for c in children { c.renderTree(parentAlpha: eff) }
+            for c in children { c.renderTree(parentAlpha: eff, worldX: wx, worldY: wy) }
         }
         gfx_restore()
     }
@@ -238,7 +386,7 @@ open class SKNode {
     public func removeAllActions() { runningActions.removeAll() }
     public func removeAction(forKey key: String) { runningActions.removeAll { $0.key == key } }
     public func action(forKey key: String) -> SKAction? { runningActions.first { $0.key == key }?.action }
-    public var hasActions: Bool { !runningActions.isEmpty }
+    public func hasActions() -> Bool { !runningActions.isEmpty }
 
     final func stepActions(_ dt: CGFloat) {
         // Apple's SKAudioNode autoplays once it lives in the active tree;

@@ -4,77 +4,62 @@ client:
 tools: {}
 targets:
   "PackageStructure": ["<PackageStructure>"]
-  "main": ["<sks2json-arm64-apple-macosx-debug.exe>","<sks2json-arm64-apple-macosx-debug.module>"]
-  "sks2json-arm64-apple-macosx-debug.exe": ["<sks2json-arm64-apple-macosx-debug.exe>"]
-  "sks2json-arm64-apple-macosx-debug.module": ["<sks2json-arm64-apple-macosx-debug.module>"]
-  "test": ["<sks2json-arm64-apple-macosx-debug.exe>","<sks2json-arm64-apple-macosx-debug.module>"]
+  "main": ["<sks2json-arm64-apple-macosx-release.exe>","<sks2json-arm64-apple-macosx-release.module>"]
+  "sks2json-arm64-apple-macosx-release.exe": ["<sks2json-arm64-apple-macosx-release.exe>"]
+  "sks2json-arm64-apple-macosx-release.module": ["<sks2json-arm64-apple-macosx-release.module>"]
+  "test": ["<sks2json-arm64-apple-macosx-release.exe>","<sks2json-arm64-apple-macosx-release.module>"]
 default: "main"
 nodes:
-  "/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/Sources/sks2json/":
+  "/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/Sources/sks2json/":
     is-directory-structure: true
     content-exclusion-patterns: [".git",".build"]
-  "/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json":
-    is-mutated: true
 commands:
-  "/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json-entitlement.plist":
+  "/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.build/sources":
     tool: write-auxiliary-file
-    inputs: ["<entitlement-plist>","<com.apple.security.get-task-allow>"]
-    outputs: ["/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json-entitlement.plist"]
-    description: "Write auxiliary file /Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json-entitlement.plist"
+    inputs: ["<sources-file-list>","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/Sources/sks2json/main.swift"]
+    outputs: ["/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.build/sources"]
+    description: "Write auxiliary file /Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.build/sources"
 
-  "/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.build/sources":
+  "/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.product/Objects.LinkFileList":
     tool: write-auxiliary-file
-    inputs: ["<sources-file-list>","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/Sources/sks2json/main.swift"]
-    outputs: ["/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.build/sources"]
-    description: "Write auxiliary file /Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.build/sources"
+    inputs: ["<link-file-list>","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.build/main.swift.o"]
+    outputs: ["/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.product/Objects.LinkFileList"
 
-  "/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.product/Objects.LinkFileList":
-    tool: write-auxiliary-file
-    inputs: ["<link-file-list>","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.build/main.swift.o"]
-    outputs: ["/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.product/Objects.LinkFileList"]
-    description: "Write auxiliary file /Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.product/Objects.LinkFileList"
-
-  "/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt":
+  "/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt":
     tool: write-auxiliary-file
     inputs: ["<swift-get-version>","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"]
-    outputs: ["/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"]
+    outputs: ["/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"]
     always-out-of-date: "true"
-    description: "Write auxiliary file /Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+    description: "Write auxiliary file /Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
 
-  "<sks2json-arm64-apple-macosx-debug.exe>":
+  "<sks2json-arm64-apple-macosx-release.exe>":
     tool: phony
-    inputs: ["<sks2json-arm64-apple-macosx-debug.exe-CodeSigning>"]
-    outputs: ["<sks2json-arm64-apple-macosx-debug.exe>"]
+    inputs: ["/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json"]
+    outputs: ["<sks2json-arm64-apple-macosx-release.exe>"]
 
-  "<sks2json-arm64-apple-macosx-debug.module>":
+  "<sks2json-arm64-apple-macosx-release.module>":
     tool: phony
-    inputs: ["/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.build/main.swift.o","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/Modules/sks2json.swiftmodule"]
-    outputs: ["<sks2json-arm64-apple-macosx-debug.module>"]
+    inputs: ["/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.build/main.swift.o","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/Modules/sks2json.swiftmodule"]
+    outputs: ["<sks2json-arm64-apple-macosx-release.module>"]
 
-  "C.sks2json-arm64-apple-macosx-debug.exe":
+  "C.sks2json-arm64-apple-macosx-release.exe":
     tool: shell
-    inputs: ["/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.build/main.swift.o","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.product/Objects.LinkFileList"]
-    outputs: ["/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json"]
-    description: "Linking ./.build/arm64-apple-macosx/debug/sks2json"
-    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-L","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug","-o","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json","-module-name","sks2json","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-alias","-Xlinker","_sks2json_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx13.0","-Xlinker","-add_ast_path","-Xlinker","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/Modules/sks2json.swiftmodule","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g"]
+    inputs: ["/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.build/main.swift.o","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.product/Objects.LinkFileList"]
+    outputs: ["/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json"]
+    description: "Linking ./.build/arm64-apple-macosx/release/sks2json"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-L","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release","-o","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json","-module-name","sks2json","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-dead_strip","-Xlinker","-alias","-Xlinker","_sks2json_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx13.0","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g"]
 
-  "C.sks2json-arm64-apple-macosx-debug.exe-entitlements":
+  "C.sks2json-arm64-apple-macosx-release.module":
     tool: shell
-    inputs: ["/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json-entitlement.plist"]
-    outputs: ["<sks2json-arm64-apple-macosx-debug.exe-CodeSigning>"]
-    description: "Applying debug entitlements to ./.build/arm64-apple-macosx/debug/sks2json"
-    args: ["codesign","--force","--sign","-","--entitlements","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json-entitlement.plist","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json"]
-
-  "C.sks2json-arm64-apple-macosx-debug.module":
-    tool: shell
-    inputs: ["/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/Sources/sks2json/main.swift","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.build/sources"]
-    outputs: ["/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.build/main.swift.o","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/Modules/sks2json.swiftmodule"]
+    inputs: ["/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/Sources/sks2json/main.swift","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.build/sources"]
+    outputs: ["/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.build/main.swift.o","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/Modules/sks2json.swiftmodule"]
     description: "Compiling Swift Module 'sks2json' (1 sources)"
-    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-module-name","sks2json","-emit-dependencies","-emit-module","-emit-module-path","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/Modules/sks2json.swiftmodule","-output-file-map","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.build/output-file-map.json","-incremental","-c","@/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/sks2json.build/sources","-I","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/Modules","-target","arm64-apple-macosx13.0","-incremental","-enable-batch-mode","-serialize-diagnostics","-index-store-path","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/index/store","-Onone","-enable-testing","-j10","-DSWIFT_PACKAGE","-DDEBUG","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/.build/arm64-apple-macosx/debug/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","sks2json_main","-swift-version","5","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g","-Xcc","-isysroot","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-Xcc","-fPIC","-Xcc","-g","-package-name","sks2json"]
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-module-name","sks2json","-emit-dependencies","-emit-module","-emit-module-path","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/Modules/sks2json.swiftmodule","-output-file-map","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.build/output-file-map.json","-whole-module-optimization","-num-threads","10","-c","@/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/sks2json.build/sources","-I","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/Modules","-target","arm64-apple-macosx13.0","-whole-module-optimization","-num-threads","10","-serialize-diagnostics","-O","-j10","-DSWIFT_PACKAGE","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/.build/arm64-apple-macosx/release/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","sks2json_main","-swift-version","5","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g","-Xcc","-isysroot","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.4.sdk","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-Xcc","-fPIC","-Xcc","-g","-package-name","sks2json"]
 
   "PackageStructure":
     tool: package-structure-tool
-    inputs: ["/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/Sources/sks2json/","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/Package.swift","/Users/toddbruss/Documents/GitHub/BossMan/wasm-web-kit/spritekit/Tools/sks2json/Package.resolved"]
+    inputs: ["/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/Sources/sks2json/","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/Package.swift","/Users/toddbruss/Documents/GitHub/SuperBox64Kit/Tools/sks2json/Package.resolved"]
     outputs: ["<PackageStructure>"]
     description: "Planning build"
     allow-missing-inputs: true

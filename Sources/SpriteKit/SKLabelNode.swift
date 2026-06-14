@@ -4,7 +4,11 @@ public enum SKLabelHorizontalAlignmentMode { case center, left, right }
 public enum SKLabelVerticalAlignmentMode { case baseline, center, top, bottom }
 
 public final class SKLabelNode: SKNode {
-    public var text: String = "" { didSet { fontHandleNeedsRebind = true } }
+    var _text: String = "" { didSet { fontHandleNeedsRebind = true } }
+    // Apple's SKLabelNode.text is optional; back it with a non-optional _text so
+    // the render path stays simple and the game's `if let l = label.text` /
+    // `label.text? += "x"` compile.
+    public var text: String? { get { _text } set { _text = newValue ?? "" } }
     public var fontSize: CGFloat = 32
     public var fontColor: SKColor? = .white
     public var fontName: String = "JetBrainsMono-Bold" { didSet { fontHandleNeedsRebind = true } }
@@ -25,13 +29,17 @@ public final class SKLabelNode: SKNode {
     private var cachedFontHandle: Int32 = 0
     private var fontHandleNeedsRebind: Bool = true
 
+    // Cull radius for the world pass: ~3× the font size comfortably covers a
+    // single emoji glyph or short HUD run without a per-frame text measure.
+    override var _cullExtent: CGFloat { fontSize * 3 }
+
     public init(attributedText: String) {
-        self.text = attributedText
+        self._text = attributedText
         super.init()
     }
     public override init() { super.init() }
     public init(text: String) {
-        self.text = text
+        self._text = text
         super.init()
     }
     public init(fontNamed name: String) {
@@ -82,22 +90,22 @@ public final class SKLabelNode: SKNode {
     // sibling node (caret, divider, etc.) at the end of the text without
     // duplicating the txt_width call.
     public func measuredWidth() -> CGFloat {
-        guard !text.isEmpty else { return 0 }
+        guard !_text.isEmpty else { return 0 }
         let px = Int32(fontSize)
         let font = resolvedFontHandle()
         var w: Int32 = 0
-        withUTF8Ptr(text) { p, n in w = txt_width(font, p, n, px, 0) }
+        withUTF8Ptr(_text) { p, n in w = txt_width(font, p, n, px, 0) }
         return CGFloat(w)
     }
 
     override func draw(alpha: CGFloat) {
-        guard !text.isEmpty, let c = fontColor else { return }
+        guard !_text.isEmpty, let c = fontColor else { return }
         let px = Int32(fontSize)
         let font = resolvedFontHandle()
         gfx_set_alpha(Float(alpha))
         gfx_save()
         gfx_scale(1, -1)  // un-flip: text must not be mirrored
-        withUTF8Ptr(text) { p, n in
+        withUTF8Ptr(_text) { p, n in
             let w = Float(txt_width(font, p, n, px, 0))
             let x: Float
             switch horizontalAlignmentMode {

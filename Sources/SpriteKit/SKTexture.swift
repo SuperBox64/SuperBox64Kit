@@ -10,7 +10,7 @@ public enum SKTextureFilteringMode { case nearest, linear }
 // here in the framework rather than each game.
 public func textureNamed(_ name: String) -> SKTexture? {
     let t = SKTexture(imageNamed: name)
-    return (t.isLoaded && t.size.width > 0 && t.size.height > 0) ? t : nil
+    return (t.isLoaded && t._size.width > 0 && t._size.height > 0) ? t : nil
 }
 
 public class SKTexture {
@@ -29,21 +29,31 @@ public class SKTexture {
         if handle > 0 { return true }
         return resolvePending() > 0
     }
-    public var size: CGSize
+    var _size: CGSize
+    // Apple's modern SpriteKit bindings expose the natural texture extent as a
+    // METHOD `size() -> CGSize` (the historical ObjC `-size` selector). Game
+    // source calls `texture.size()`, so we match that shape exactly.
+    public func size() -> CGSize { _size }
     public var filteringMode: SKTextureFilteringMode = .linear
     public var usesMipmaps: Bool = false
     var sourceRect: CGRect = .zero
 
+    // No-arg init — Apple allows `var t = SKTexture()` (empty placeholder).
+    public init() {
+        handle = 0
+        _size = .zero
+        pendingName = nil
+    }
     public init(imageNamed name: String) {
         let h = withUTF8Ptr(name) { img_by_name($0, $1) }
         handle = h
         pendingName = h == 0 ? name : nil
-        size = .zero
+        _size = .zero
         if h > 0 { populateSize() }
     }
     init(handle: Int32) {
         self.handle = handle
-        size = .zero
+        _size = .zero
         if handle > 0 { populateSize() }
     }
 
@@ -56,7 +66,7 @@ public class SKTexture {
             gfx_free_image(handle)
             handle = 0
             pendingName = nil
-            size = .zero
+            _size = .zero
         }
     }
 
@@ -80,11 +90,9 @@ public class SKTexture {
     private func populateSize() {
         let w = img_width(handle)
         let h = img_height(handle)
-        if w > 0 && h > 0 { size = CGSize(width: CGFloat(w), height: CGFloat(h)) }
+        if w > 0 && h > 0 { _size = CGSize(width: CGFloat(w), height: CGFloat(h)) }
     }
 
-    // Apple exposes size as a property in modern Swift bindings; we keep it
-    // as a property only (the historical -size() ObjC method collides).
     public func textureRect() -> CGRect {
         if sourceRect == .zero { return CGRect(x: 0, y: 0, width: 1, height: 1) }
         return sourceRect
@@ -96,7 +104,7 @@ public class SKTexture {
     public convenience init(rect: CGRect, in parent: SKTexture) {
         self.init(handle: parent.handle)
         self.sourceRect = rect
-        self.size = CGSize(width: rect.width, height: rect.height)
+        self._size = CGSize(width: rect.width, height: rect.height)
     }
 
     // Preload — assets are eager-loaded by the runtime's manifest, so these
@@ -133,7 +141,7 @@ public final class SKMutableTexture: SKTexture {
             gfx_upload_pixels(0, Int32(w), Int32(h), buf.baseAddress, Int32(buf.count))
         }
         super.init(handle: id)
-        self.size = CGSize(width: CGFloat(w), height: CGFloat(h))
+        self._size = CGSize(width: CGFloat(w), height: CGFloat(h))
     }
     public init(size: CGSize, pixelFormat: Int) { fatalError("init not supported") }
 

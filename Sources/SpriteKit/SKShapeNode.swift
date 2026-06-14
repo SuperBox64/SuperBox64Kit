@@ -36,7 +36,26 @@ public final class SKShapeNode: SKNode {
     public var shadowBlur: CGFloat = 0
     public var shadowOffset: CGVector = .zero
     public var shadowColor: SKColor = SKColor(red: 0, green: 0, blue: 0, alpha: 0.4)
-    public var path: CGPath? { didSet { kind = .path } }   // reassigning the path re-shapes the node
+    // Apple exposes a non-nil CGPath for every shape. Back it with _path and
+    // derive a CGPath from `kind` when none was set explicitly, so the game's
+    // `shapeNode.path!` (e.g. SKRegion(path: shape.path!)) never traps on nil.
+    private var _path: CGPath? = nil
+    public var path: CGPath? {
+        get {
+            if let p = _path { return p }
+            let p = CGMutablePath()
+            switch kind {
+            case .circle(let r):
+                p.addEllipse(in: CGRect(x: -r, y: -r, width: r * 2, height: r * 2))
+            case .rect(let x, let y, let w, let h):
+                p.addRect(CGRect(x: x, y: y, width: w, height: h))
+            case .path:
+                return nil
+            }
+            return p
+        }
+        set { _path = newValue; kind = .path }   // reassigning the path re-shapes the node
+    }
 
     // Line styling — Apple maps these to Canvas2D lineCap/lineJoin almost 1:1.
     public var lineCap: SKLineCap = .butt
@@ -106,12 +125,12 @@ public final class SKShapeNode: SKNode {
     }
     public init(path p: CGPath) {
         kind = .path
-        self.path = p
+        _path = p
         super.init()
     }
     public init(path p: CGPath, centered: Bool) {
         kind = .path
-        self.path = p
+        _path = p
         super.init()
     }
     // Convenience polyline init (mirrors SKShapeNode(points:count:) on Apple).

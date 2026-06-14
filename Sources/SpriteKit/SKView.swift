@@ -25,7 +25,7 @@ func _kitDrainAudioCompletions() {
 // Drives a presented SKScene from the kit's frame(dtMs): advances actions,
 // calls scene.update, steps physics, renders the tree (flipping y-up to the
 // Canvas y-down surface).
-public final class SKView {
+public class SKView: UIView {
     public private(set) var scene: SKScene?
     private var elapsed: TimeInterval = 0
     // Wall-clock accrued toward the next render. Seeded large so the first tick
@@ -47,9 +47,13 @@ public final class SKView {
     public var preferredFramesPerSecond: Int = 60
     public var isAsynchronous = true
     public var isPaused = false
-    public var bounds: CGRect = .zero
+    public var showsLargeContentViewer = false
+    // `bounds`, `backgroundColor`, `isMultipleTouchEnabled`, `isOpaque`,
+    // `clipsToBounds`, `isUserInteractionEnabled`, `drawHierarchy(...)` are
+    // inherited from UIView so the unchanged `self.view as? SKView` path and the
+    // view-property assignments in GameViewController/LevelUp compile + succeed.
 
-    public init() {}
+    public override init() { super.init() }
 
     public func presentScene(_ scene: SKScene?) {
         // Tear down the outgoing scene first (Apple calls willMove(from:) on
@@ -100,7 +104,7 @@ public final class SKView {
         let img = gfx_offscreen_end_to_image(handle)
         if img <= 0 { return nil }
         let t = SKTexture(handle: img)
-        t.size = CGSize(width: CGFloat(w), height: CGFloat(h))
+        t._size = CGSize(width: CGFloat(w), height: CGFloat(h))
         return t
     }
     public func texture(from node: SKNode, crop: CGRect) -> SKTexture? { texture(from: node) }
@@ -113,7 +117,6 @@ public final class SKView {
     public func exitFullscreen()  { win_exit_fullscreen() }
 
     public func tick(_ dtMs: Double) {
-        guard let s = scene else { return }
         // Clamp the frame delta to one 60 Hz step. On the web a dropped frame,
         // GC pause, or tab refocus hands us a large delta that makes
         // SKAction-driven movement (Pete) lurch forward more than a step, while
@@ -124,8 +127,15 @@ public final class SKView {
         let dt = min(dtMs / 1000.0, 1.0 / 60.0)
         elapsed += dt
         SKSpriteNode._setKitClock(Float(elapsed))    // u_time for SKShader binds
+        // Pump the run loop (Timer + DispatchQueue.main + per-frame hooks) BEFORE
+        // the scene guard. The standard GameViewController idiom presents the
+        // first scene from inside `DispatchQueue.main.async { view.presentScene }`;
+        // if we returned early on a nil scene we'd never drain that queue and the
+        // game would never start rendering. Draining first lets the deferred
+        // presentScene take effect on the very next frame.
         KitRunLoop._tick(dt)
         _kitDrainAudioCompletions()
+        guard let s = scene else { return }
         let hadInput = pollEvents(s)
         s.stepActions(dt)
         SKAudioNode.reapDetached()
@@ -155,25 +165,121 @@ public final class SKView {
             switch type {
             case 5:  s.keyDown(Int(a))
             case 6:  s.keyUp(Int(a))
-            case 9:  a == 1 ? s.rightMouseDown(at: scenePoint(b, c, s)) : s.mouseDown(at: scenePoint(b, c, s), clickCount: max(1, Int(d)))
-            case 10: a == 1 ? s.rightMouseUp(at: scenePoint(b, c, s))   : s.mouseUp(at: scenePoint(b, c, s))
-            case 11: s.mouseMoved(to: scenePoint(a, b, s))
-            case 19: s.touchBegan(finger: Int(a), at: scenePoint(b, c, s))
-            case 20: s.touchMoved(finger: Int(a), at: scenePoint(b, c, s))
-            case 21: s.touchEnded(finger: Int(a), at: scenePoint(b, c, s))
+            case 9:
+                if a == 1 { s.rightMouseDown(at: scenePoint(b, c, s)) }
+                else {
+                    s.mouseDown(at: scenePoint(b, c, s), clickCount: max(1, Int(d)))
+                    dispatchTouches(.began, at: worldPoint(b, c, s), to: s)   // iOS-style touch path
+                }
+            case 10:
+                if a == 1 { s.rightMouseUp(at: scenePoint(b, c, s)) }
+                else {
+                    s.mouseUp(at: scenePoint(b, c, s))
+                    dispatchTouches(.ended, at: worldPoint(b, c, s), to: s)
+                }
+            case 11:
+                s.mouseMoved(to: scenePoint(a, b, s))
+                dispatchTouches(.moved, at: worldPoint(a, b, s), to: s)
+            case 19:
+                s.touchBegan(finger: Int(a), at: scenePoint(b, c, s))
+                dispatchTouches(.began, at: worldPoint(b, c, s), to: s)
+            case 20:
+                s.touchMoved(finger: Int(a), at: scenePoint(b, c, s))
+                dispatchTouches(.moved, at: worldPoint(b, c, s), to: s)
+            case 21:
+                s.touchEnded(finger: Int(a), at: scenePoint(b, c, s))
+                dispatchTouches(.ended, at: worldPoint(b, c, s), to: s)
             default: break
             }
         }
         return handled
     }
 
+    // Bridge host pointer/touch events to the iOS UIResponder touch API. Many
+    // ported games drive their UI from `touchesBegan(_:with:)` (UITouch) rather
+    // than the AppKit mouseDown(with:) path — without this, taps on menu buttons
+    // never reach the game. We synthesize a single UITouch carrying the resolved
+    // scene-space point (so `touch.location(in: node)` returns it directly) and
+    // hand it to the scene's touchesBegan/Moved/Ended.
+    // The interaction-enabled node that captured the current touch sequence (the
+    // joystick while you drag it). nil = the touch goes to the scene. SpriteKit
+    // delivers an entire began→moved→ended sequence to the node hit on began.
+    private weak var _capturedTouchNode: SKNode?
+
+    private func dispatchTouches(_ phase: UITouchPhase, at world: CGPoint, to s: SKScene) {
+        let t = UITouch()
+        t.phase = phase
+        t.view = self
+        t._sceneLocation = world      // WORLD coords; UITouch.location(in:) converts per target node
+        let set: Set<UITouch> = [t]
+        let evt = UIEvent()
+        switch phase {
+        case .began:
+            // Deepest interaction-enabled node under the touch captures it; an
+            // un-overridden handler forwards up the responder chain to the scene
+            // (so HUD fire taps still reach GameScene.touchesBegan via atPoint).
+            let target = s.deepestInteractiveNode(at: world)
+            _capturedTouchNode = target
+            (target ?? s).touchesBegan(set, with: evt)
+        case .moved:
+            (_capturedTouchNode ?? s).touchesMoved(set, with: evt)
+        case .ended, .cancelled:
+            (_capturedTouchNode ?? s).touchesEnded(set, with: evt)
+            _capturedTouchNode = nil
+        default: break
+        }
+    }
+
+    // Raw host pixel (y-down) -> WORLD/scene coords, camera-aware. Inverts the
+    // render world pass: undo the screen-centre, camera zoom and camera position
+    // so a touch maps to the same world point the nodes were drawn at. Falls back
+    // to the anchor-based mapping when the scene has no camera.
+    private func worldPoint(_ x: Int32, _ y: Int32, _ s: SKScene) -> CGPoint {
+        let w = s.size.width, h = s.size.height
+        if let cam = s.camera {
+            let sx = cam.xScale == 0 ? 1 : cam.xScale
+            let sy = cam.yScale == 0 ? 1 : cam.yScale
+            return CGPoint(x: (CGFloat(x) - w/2) * sx + cam.position.x,
+                           y: (h/2 - CGFloat(y)) * sy + cam.position.y)
+        }
+        let ax = s.anchorPoint.x, ay = s.anchorPoint.y
+        return CGPoint(x: CGFloat(x) - ax * w, y: h - ay * h - CGFloat(y))
+    }
+
     private func scenePoint(_ x: Int32, _ y: Int32, _ s: SKScene) -> CGPoint {
-        CGPoint(x: CGFloat(x), y: s.size.height - CGFloat(y))   // runtime gives y-down logical px
+        // Runtime gives y-down logical px. Map to the scene's y-up space, honoring
+        // the scene anchorPoint so a centred scene (anchor 0.5,0.5 — the menu)
+        // hit-tests where it actually drew. Mirrors the anchor translate in
+        // render(): scene origin sits at view (ax*w, h - ay*h).
+        let w = s.size.width, h = s.size.height
+        let ax = s.anchorPoint.x, ay = s.anchorPoint.y
+        return CGPoint(x: CGFloat(x) - ax * w, y: h - ay * h - CGFloat(y))
     }
 
     private func render(_ s: SKScene) {
         gfx_clear(s.backgroundColor.rgba)
         let cam = s.camera
+        // Viewport in WORLD coords for the world pass — drawable leaves fully
+        // outside are skipped (frustum culling). Generous margin so nothing pops
+        // at the edge. Cleared before the screen-fixed HUD pass below.
+        if shouldCullNonVisibleNodes {
+            let margin: CGFloat = 256
+            if let cam {
+                let sx = cam.xScale == 0 ? 1 : abs(cam.xScale)
+                let sy = cam.yScale == 0 ? 1 : abs(cam.yScale)
+                let vw = s.size.width * sx, vh = s.size.height * sy
+                SKNode._cullRect = CGRect(x: cam.position.x - vw/2 - margin,
+                                          y: cam.position.y - vh/2 - margin,
+                                          width: vw + margin*2, height: vh + margin*2)
+            } else {
+                SKNode._cullRect = CGRect(x: -s.anchorPoint.x*s.size.width - margin,
+                                          y: -s.anchorPoint.y*s.size.height - margin,
+                                          width: s.size.width + margin*2,
+                                          height: s.size.height + margin*2)
+            }
+        } else {
+            SKNode._cullRect = nil
+        }
         // World pass: under the camera's inverse so the scene appears as if shot
         // through its lens (cam.position centred, scaled/rotated by the inverse),
         // but SKIP the camera node's own subtree — its children are screen-fixed
@@ -196,6 +302,14 @@ public final class SKView {
         if cam != nil {
             s.renderWorld(skipping: cam, parentAlpha: 1)
         } else {
+            // No camera: honor the scene anchorPoint so scene-space (0,0) lands
+            // at the anchor fraction of the view (a 0.5,0.5 menu draws centred).
+            // Matches the inverse mapping in scenePoint(). Camera scenes ignore
+            // anchorPoint — the camera controls the viewport instead.
+            if s.anchorPoint != .zero {
+                gfx_translate(Float(s.anchorPoint.x * s.size.width),
+                              Float(s.anchorPoint.y * s.size.height))
+            }
             s.renderTree(parentAlpha: 1)
         }
         // Apple-style showsPhysics overlay: strokes every Box2D body's
@@ -206,7 +320,9 @@ public final class SKView {
         // Camera-children pass: screen-fixed overlays (HUD, PAUSED, joystick,
         // fire button, game-over). Same y-flip + scene-centring, but no zoom,
         // no camera rotation, no -cam.position — so they ignore the camera the
-        // way SKCameraNode children do on native SpriteKit.
+        // way SKCameraNode children do on native SpriteKit. World-space culling
+        // must be OFF here (these draw in screen space, not world space).
+        SKNode._cullRect = nil
         if let cam {
             gfx_save()
             gfx_translate(0, Float(s.size.height))

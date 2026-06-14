@@ -69,7 +69,17 @@ typedef struct {
     int sbixPpem;
     int sbixDescentPx;
     int numGlyphs;
+    const unsigned char* fileBase;
+    int fileLen;
 } KitEmoji;
+
+/* A glyph slice must lie wholly inside the font file, or a malformed/
+   misparsed offset would hand back a pointer that reads (and the caller
+   then decodes) out of bounds. Reject anything that escapes the buffer. */
+static int kit_slice_ok(const KitEmoji* e, const unsigned char* p, uint32_t len) {
+    return p >= e->fileBase && len > 0 && len <= (uint32_t)e->fileLen
+        && p + len <= e->fileBase + e->fileLen;
+}
 
 static uint16_t kit_rd16(const unsigned char* p) { return (uint16_t)((p[0] << 8) | p[1]); }
 static uint32_t kit_rd32(const unsigned char* p) {
@@ -109,12 +119,14 @@ static const unsigned char* kit_pick_cmap(const unsigned char* ttf, int* format)
 static int kit_cmap_lookup(const KitEmoji* e, uint32_t cp) {
     if (!e->cmap) return 0;
     if (e->cmapFormat == 12) {
+        if (!kit_slice_ok(e, e->cmap + 12, 4)) return 0;
         uint32_t nGroups = kit_rd32(e->cmap + 12);
         const unsigned char* groups = e->cmap + 16;
         uint32_t lo = 0, hi = nGroups;
         while (lo < hi) {
             uint32_t mid = (lo + hi) / 2;
             const unsigned char* g = groups + 12 * mid;
+            if (!kit_slice_ok(e, g, 12)) return 0;
             uint32_t start = kit_rd32(g);
             uint32_t end = kit_rd32(g + 4);
             if (cp < start) { hi = mid; }
@@ -124,18 +136,22 @@ static int kit_cmap_lookup(const KitEmoji* e, uint32_t cp) {
         return 0;
     }
     if (e->cmapFormat == 4 && cp <= 0xFFFF) {
+        if (!kit_slice_ok(e, e->cmap + 6, 2)) return 0;
         uint16_t segCountX2 = kit_rd16(e->cmap + 6);
         const unsigned char* endCodes = e->cmap + 14;
         const unsigned char* startCodes = endCodes + segCountX2 + 2;
         const unsigned char* idDeltas = startCodes + segCountX2;
         const unsigned char* idRangeOffsets = idDeltas + segCountX2;
         for (uint16_t i = 0; i < segCountX2; i += 2) {
+            if (!kit_slice_ok(e, endCodes + i, 2) || !kit_slice_ok(e, startCodes + i, 2)
+             || !kit_slice_ok(e, idDeltas + i, 2) || !kit_slice_ok(e, idRangeOffsets + i, 2)) return 0;
             if (cp > kit_rd16(endCodes + i)) continue;
             uint16_t start = kit_rd16(startCodes + i);
             if (cp < start) return 0;
             uint16_t rangeOff = kit_rd16(idRangeOffsets + i);
             if (rangeOff == 0) return (int)((cp + kit_rd16(idDeltas + i)) & 0xFFFF);
             const unsigned char* p = idRangeOffsets + i + rangeOff + 2 * (cp - start);
+            if (!kit_slice_ok(e, p, 2)) return 0;
             uint16_t g = kit_rd16(p);
             if (g == 0) return 0;
             return (int)((g + kit_rd16(idDeltas + i)) & 0xFFFF);
@@ -168,6 +184,8 @@ static const unsigned char* kit_find_table2(const unsigned char* file, const uns
 void* kit_emoji_init(const unsigned char* ttf, int len) {
     KitEmoji* e = malloc(sizeof(KitEmoji));
     if (!e) return 0;
+    e->fileBase = ttf;
+    e->fileLen = len;
     const unsigned char* dir = kit_font_dir(ttf);
 
     const unsigned char* cmapTable = kit_find_table2(ttf, dir, "cmap");
@@ -265,6 +283,7 @@ const unsigned char* kit_emoji_glyph_png(void* handle, int codepoint, uint32_t* 
             }
             if (data[4] != 'p' || data[5] != 'n' || data[6] != 'g' || data[7] != ' ') return 0;
             *pngLen = o2 - o1 - 8;
+            if (!kit_slice_ok(e, data + 8, *pngLen)) return 0;
             *ppem = e->sbixPpem;
             *bearingX = originX;
             *bearingY = originY + (int)(kit_png_height(data + 8, *pngLen) * 79 / 100);
@@ -281,11 +300,13 @@ const unsigned char* kit_emoji_glyph_png(void* handle, int codepoint, uint32_t* 
 
     for (uint32_t i = 0; i < numSub; i++) {
         const unsigned char* rec = array + 8 * i;
+        if (!kit_slice_ok(e, rec, 8)) return 0;
         uint16_t first = kit_rd16(rec);
         uint16_t last = kit_rd16(rec + 2);
         if (glyph < first || glyph > last) continue;
 
         const unsigned char* sub = array + kit_rd32(rec + 4);
+        if (!kit_slice_ok(e, sub, 8)) return 0;
         uint16_t indexFormat = kit_rd16(sub);
         uint16_t imageFormat = kit_rd16(sub + 2);
         uint32_t imageDataOffset = kit_rd32(sub + 4);
@@ -294,6 +315,7 @@ const unsigned char* kit_emoji_glyph_png(void* handle, int codepoint, uint32_t* 
 
         if (indexFormat == 1) {
             const unsigned char* offsets = sub + 8;
+            if (!kit_slice_ok(e, offsets + 4 * (glyph - first), 8)) return 0;
             uint32_t o1 = kit_rd32(offsets + 4 * (glyph - first));
             uint32_t o2 = kit_rd32(offsets + 4 * (glyph - first + 1));
             off = o1;
@@ -314,24 +336,36 @@ const unsigned char* kit_emoji_glyph_png(void* handle, int codepoint, uint32_t* 
         if (size == 0) return 0;
 
         const unsigned char* data = e->cbdt + imageDataOffset + off;
+        if (!kit_slice_ok(e, data, size)) return 0;
         *ppem = e->ppem;
+        /* Scale the glyph by its OWN bitmap height (smallGlyphMetrics.height,
+           data[0]), not the strike's ppemX: a CBDT emoji bitmap overshoots the
+           em (Noto's are ~136px in a 109 strike), so using ppemX renders it
+           oversized and hanging below the baseline. Height = the bitmap's pixel
+           rows, so ppem=height renders it at exactly the requested size and the
+           font's own bearingY lands the baseline. Font-derived, no constant. */
         if (imageFormat == 17) {
+            if (data[0] > 0) *ppem = data[0];
             *bearingX = (signed char)data[2];
             *bearingY = (signed char)data[3];
             *advance = data[4];
             *pngLen = kit_rd32(data + 5);
+            if (!kit_slice_ok(e, data + 9, *pngLen)) return 0;
             return data + 9;
         } else if (imageFormat == 18) {
+            if (data[0] > 0) *ppem = data[0];
             *bearingX = (signed char)data[2];
             *bearingY = (signed char)data[3];
             *advance = data[4];
             *pngLen = kit_rd32(data + 8);
+            if (!kit_slice_ok(e, data + 12, *pngLen)) return 0;
             return data + 12;
         } else if (imageFormat == 19) {
             *bearingX = 0;
             *bearingY = e->ppem;
             *advance = e->ppem;
             *pngLen = kit_rd32(data);
+            if (!kit_slice_ok(e, data + 4, *pngLen)) return 0;
             return data + 4;
         }
         return 0;

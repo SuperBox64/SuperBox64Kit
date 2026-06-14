@@ -125,7 +125,7 @@ public struct Notification {
 }
 
 public final class NotificationCenter {
-    public static let `default` = NotificationCenter()
+    nonisolated(unsafe) public static let `default` = NotificationCenter()
     public final class ObserverToken {}
 
     private var observers: [(name: Notification.Name?, token: ObserverToken, block: (Notification) -> Void)] = []

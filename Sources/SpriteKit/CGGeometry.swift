@@ -47,6 +47,10 @@ public struct CGVector: Equatable, Hashable, Sendable {
         self.dx = dx
         self.dy = dy
     }
+    // Apple supplies an Int overload (CGVector(dx: Int, dy: Int)).
+    public init(dx: Int, dy: Int) {
+        self.init(dx: CGFloat(dx), dy: CGFloat(dy))
+    }
     public static let zero = CGVector()
 }
 

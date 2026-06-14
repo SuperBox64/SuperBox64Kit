@@ -18,6 +18,37 @@ public final class CGMutablePath {
         current = [p]
     }
     public func addLine(to p: CGPoint) { if current.isEmpty { current = [p] } else { current.append(p) } }
+    public func addLines(between points: [CGPoint]) { for p in points { addLine(to: p) } }
+    // Largest distance from the origin across all path points — used by SKRegion
+    // to scope an SKFieldNode's force to bodies inside the region.
+    func maxRadiusFromOrigin() -> CGFloat {
+        var m: CGFloat = 0
+        for sp in subpaths { for p in sp { m = max(m, (p.x*p.x + p.y*p.y).squareRoot()) } }
+        for p in current  { m = max(m, (p.x*p.x + p.y*p.y).squareRoot()) }
+        return m > 0 ? m : .greatestFiniteMagnitude
+    }
+    // Quadratic/cubic Béziers flattened to line segments (enough for SKShapeNode
+    // rendering + SKAction.follow path sampling — the enemy patrol paths).
+    public func addQuadCurve(to end: CGPoint, control c: CGPoint) {
+        let start = current.last ?? c
+        let n = 16
+        for i in 1...n {
+            let t = CGFloat(i) / CGFloat(n), mt = 1 - CGFloat(i) / CGFloat(n)
+            let x = mt*mt*start.x + 2*mt*t*c.x + t*t*end.x
+            let y = mt*mt*start.y + 2*mt*t*c.y + t*t*end.y
+            addLine(to: CGPoint(x: x, y: y))
+        }
+    }
+    public func addCurve(to end: CGPoint, control1 c1: CGPoint, control2 c2: CGPoint) {
+        let start = current.last ?? c1
+        let n = 18
+        for i in 1...n {
+            let t = CGFloat(i) / CGFloat(n), mt = 1 - CGFloat(i) / CGFloat(n)
+            let x = mt*mt*mt*start.x + 3*mt*mt*t*c1.x + 3*mt*t*t*c2.x + t*t*t*end.x
+            let y = mt*mt*mt*start.y + 3*mt*mt*t*c1.y + 3*mt*t*t*c2.y + t*t*t*end.y
+            addLine(to: CGPoint(x: x, y: y))
+        }
+    }
     public func addRect(_ r: CGRect) {
         flush()
         subpaths.append([CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),

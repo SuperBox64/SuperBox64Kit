@@ -281,7 +281,18 @@ final class Kit {
     var fontNames: [String: Int32] = [:]
     var defaultFont: Int32 = -1
 
-    var emojiFont: UnsafeMutableRawPointer? = nil
+    // Three emoji sources the games can render through, chosen by emojiMode:
+    //   0 apple — Apple Color Emoji sbix font (macOS only)
+    //   1 png   — Apple-art PNGs pulled from a bundled zip (emojiPngProvider)
+    //   2 noto  — NotoColorEmoji CBDT font
+    // The chosen mode is tried first, the rest fall back behind it with Noto
+    // last in the apple/png chains, so a glyph one source lacks still renders.
+    static let emojiModeApple: Int32 = 0
+    static let emojiModePng: Int32 = 1
+    static let emojiModeNoto: Int32 = 2
+    var emojiMode: Int32 = 0
+    var appleEmojiFont: UnsafeMutableRawPointer? = nil
+    var notoEmojiFont: UnsafeMutableRawPointer? = nil
 
     struct EmojiGlyph {
         var tex: UnsafeMutablePointer<SDL_Texture>?
@@ -294,28 +305,96 @@ final class Kit {
     }
     var emojiCache: [Int: EmojiGlyph] = [:]
 
+    // Host-pluggable PNG emoji source (png mode): given a codepoint, the host
+    // hands back the raw bytes of a square color PNG (e.g. pulled on the fly out
+    // of a bundled emoji zip). nil = no glyph for that codepoint.
+    var emojiPngProvider: ((Int32) -> [UInt8]?)? = nil
+
+    // Back-compat: single-font games keep calling setEmojiFont; that font is the
+    // apple slot, and the default mode renders through it.
     func setEmojiFont(_ ttf: UnsafePointer<UInt8>?, _ len: Int) {
-        emojiFont = kit_emoji_init(ttf, Int32(len))
+        appleEmojiFont = kit_emoji_init(ttf, Int32(len))
+    }
+    func setNotoEmojiFont(_ ttf: UnsafePointer<UInt8>?, _ len: Int) {
+        notoEmojiFont = kit_emoji_init(ttf, Int32(len))
+    }
+    // The mode is a preference with fallback, so the source that actually
+    // renders a glyph can differ (e.g. NOTO mode but a glyph Noto lacks falls to
+    // Apple). Log the FIRST glyph each source renders after a mode change, so the
+    // console shows exactly which source is in use without per-glyph spam.
+    var emojiLoggedSources: Set<Int32> = []
+    private func emojiModeName(_ m: Int32) -> String {
+        m == Kit.emojiModePng ? "PNG" : m == Kit.emojiModeNoto ? "NOTO" : "APPLE"
+    }
+    private func logEmojiSource(_ src: Int32, _ cp: Int32) {
+        guard emojiLoggedSources.insert(src).inserted else { return }
+        let name = src == Kit.emojiModePng ? "PNG zip (apple-color-emoji.zip)"
+                 : src == Kit.emojiModeNoto ? "NOTO CBDT font (NotoColorEmoji.ttf)"
+                 : "APPLE sbix font (Apple Color Emoji.ttc)"
+        print("emoji: rendering via \(name)  [mode=\(emojiModeName(emojiMode)), first cp=\(cp)]")
+    }
+    func setEmojiMode(_ m: Int32) {
+        guard m != emojiMode else { return }
+        emojiMode = m
+        emojiLoggedSources.removeAll()
+        print("emoji: mode set to \(emojiModeName(m))")
+        for (_, g) in emojiCache where g.tex != nil { SDL_DestroyTexture(g.tex) }
+        emojiCache.removeAll()
     }
 
     func emojiGlyph(_ cp: Int32) -> EmojiGlyph? {
-        guard let emojiFont else { return nil }
         if let g = emojiCache[Int(cp)] { return g }
+        let order: [Int32] = emojiMode == Kit.emojiModePng ? [1, 0, 2]
+                           : emojiMode == Kit.emojiModeNoto ? [2, 0, 1]
+                           : [0, 1, 2]
+        for src in order {
+            if src == Kit.emojiModePng {
+                if let provider = emojiPngProvider, let bytes = provider(cp),
+                   let g = pngEmojiGlyph(bytes, cp) { logEmojiSource(src, cp); return g }
+            } else if let font = (src == Kit.emojiModeNoto ? notoEmojiFont : appleEmojiFont),
+                      let g = fontEmojiGlyph(font, cp) {
+                logEmojiSource(src, cp)
+                return g
+            }
+        }
+        return nil
+    }
+
+    private func fontEmojiGlyph(_ font: UnsafeMutableRawPointer, _ cp: Int32) -> EmojiGlyph? {
         var pngLen: UInt32 = 0
         var ppem: Int32 = 0
         var bearingX: Int32 = 0
         var bearingY: Int32 = 0
         var advance: Int32 = 0
-        guard let png = kit_emoji_glyph_png(emojiFont, cp, &pngLen, &ppem, &bearingX, &bearingY, &advance) else { return nil }
+        guard let png = kit_emoji_glyph_png(font, cp, &pngLen, &ppem, &bearingX, &bearingY, &advance) else { return nil }
+        return buildEmoji(png, Int32(pngLen), cp, ppem: ppem, bearingX: bearingX, bearingY: bearingY, advance: advance)
+    }
+
+    private func pngEmojiGlyph(_ bytes: [UInt8], _ cp: Int32) -> EmojiGlyph? {
+        bytes.withUnsafeBufferPointer { buf in
+            guard let base = buf.baseAddress else { return nil }
+            // No sbix metrics in a loose PNG: a 160px Apple strike sits ~79%
+            // above the baseline, square advance — the same rule the font path
+            // applies with a zero origin.
+            return buildEmoji(base, Int32(buf.count), cp,
+                              ppem: 0, bearingX: 0, bearingY: 0, advance: 0, looseSquare: true)
+        }
+    }
+
+    private func buildEmoji(_ png: UnsafePointer<UInt8>, _ pngLen: Int32, _ cp: Int32,
+                            ppem: Int32, bearingX: Int32, bearingY: Int32, advance: Int32,
+                            looseSquare: Bool = false) -> EmojiGlyph? {
         var w: Int32 = 0
         var h: Int32 = 0
-        guard let pixels = kit_png_decode(png, Int32(pngLen), &w, &h) else { return nil }
+        guard let pixels = kit_png_decode(png, pngLen, &w, &h), w > 0, h > 0 else { return nil }
         let tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, w, h)
         var rect = SDL_Rect(x: 0, y: 0, w: w, h: h)
         _ = SDL_UpdateTexture(tex, &rect, pixels, w * 4)
         kit_stb_free(pixels)
         _ = SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND)
-        let g = EmojiGlyph(tex: tex, w: w, h: h, ppem: ppem, bearingX: bearingX, bearingY: bearingY, advance: advance)
+        let g = looseSquare
+            ? EmojiGlyph(tex: tex, w: w, h: h, ppem: h, bearingX: 0, bearingY: h * 79 / 100, advance: w)
+            : EmojiGlyph(tex: tex, w: w, h: h, ppem: ppem, bearingX: bearingX, bearingY: bearingY, advance: advance)
         emojiCache[Int(cp)] = g
         return g
     }
@@ -1427,12 +1506,50 @@ final class Kit {
         }
     }
 
+    // A store key ending in ".json" is a JSON blob, persisted as a real .json
+    // file beside the .tsv (e.g. levels.json) instead of a multi-line row that
+    // bloats the settings file. Generic: no per-game code, and the resulting
+    // file is directly shareable / re-loadable. Plain settings stay in the .tsv.
+    private func jsonBlobPath(_ key: String) -> String? {
+        guard key.hasSuffix(".json") else { return nil }
+        var stem = storePath
+        if stem.hasSuffix(".store.tsv") { stem = String(stem.dropLast(10)) }
+        else if stem.hasSuffix(".tsv") { stem = String(stem.dropLast(4)) }
+        return stem + "." + key
+    }
+
     func storeGet(_ key: String) -> String? {
+        if let path = jsonBlobPath(key) {
+            var size = 0
+            if let data = path.withCString({ SDL_LoadFile($0, &size) }) {
+                let bytes = UnsafeRawPointer(data).bindMemory(to: UInt8.self, capacity: size)
+                var out = [UInt8]()
+                out.reserveCapacity(size + 1)
+                for i in 0..<size { out.append(bytes[i]) }
+                SDL_free(data)
+                out.append(0)
+                return out.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+            }
+            // fall through: a value still living in the .tsv from before the split
+        }
         for i in 0..<storeKeys.count where storeKeys[i] == key { return storeVals[i] }
         return nil
     }
 
     func storeSet(_ key: String, _ val: String) {
+        print("DBGSET key=[\(key)] hasJsonSuffix=\(key.hasSuffix(".json")) blobPath=\(jsonBlobPath(key) ?? "nil")")
+        if let path = jsonBlobPath(key) {
+            let bytes = Array(val.utf8)
+            _ = path.withCString { p in bytes.withUnsafeBufferPointer { SDL_SaveFile(p, $0.baseAddress, $0.count) } }
+            // migrate: drop any legacy .tsv row so the settings file stays clean
+            for i in 0..<storeKeys.count where storeKeys[i] == key {
+                storeKeys.remove(at: i)
+                storeVals.remove(at: i)
+                saveStore()
+                break
+            }
+            return
+        }
         for i in 0..<storeKeys.count where storeKeys[i] == key {
             storeVals[i] = val
             saveStore()
@@ -1794,7 +1911,11 @@ func store_get(_ key: UnsafePointer<CChar>?, _ klen: Int32,
     if let buf {
         for i in 0..<n { buf[i] = CChar(bitPattern: bytes[i]) }
     }
-    return Int32(n)
+    // Return the FULL length, not the copied count: games probe with a small
+    // buffer to learn the size, then re-read with a buffer that fits. Returning
+    // the truncated count made them read a 1-byte value ("26" -> "2", and the
+    // leaderboard JSON -> "[", which fails to parse). Matches the web runtime.
+    return Int32(bytes.count)
 }
 
 @_cdecl("store_set")
@@ -2507,7 +2628,21 @@ func win_exit_fullscreen() {
 func win_download(_ name: UnsafePointer<CChar>?, _ nlen: Int32, _ data: UnsafePointer<CChar>?, _ dlen: Int32) {
     let k = Kit.shared
     guard let data, dlen > 0 else { return }
-    _ = k.cString(name, nlen).withCString { SDL_SaveFile($0, data, Int(dlen)) }
+    let fname = k.cString(name, nlen)
+    // The web build downloads the file to the browser; the macOS app reveals it
+    // in Finder. The native console has neither, so write it to the user's
+    // Downloads (discoverable, app-agnostic; the binary's folder as a fallback)
+    // and open it in the default handler so SHOW actually shows the data — a
+    // bare filename to the cwd wrote it somewhere invisible and looked broken.
+    var dir = ""
+    if let dl = SDL_GetUserFolder(SDL_FOLDER_DOWNLOADS) { dir = String(cString: dl) }
+    else if let base = SDL_GetBasePath() { dir = String(cString: base) }
+    let path = dir + fname
+    let ok = path.withCString { SDL_SaveFile($0, data, Int(dlen)) }
+    if ok {
+        print("download: wrote \(path)")
+        _ = ("file://" + path).withCString { SDL_OpenURL($0) }
+    }
 }
 
 // MARK: - text to speech

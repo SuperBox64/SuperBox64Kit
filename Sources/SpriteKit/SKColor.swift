@@ -18,6 +18,11 @@ public struct SKColor: Equatable, Sendable {
     public init(calibratedRed: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
         self.init(red: calibratedRed, green: green, blue: blue, alpha: alpha)
     }
+    // Display P3 wide-gamut init. We render in sRGB; treat the P3 components as
+    // sRGB (visually close for the muted palette colors games use here).
+    public init(displayP3Red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
+        self.init(red: displayP3Red, green: green, blue: blue, alpha: alpha)
+    }
     public init(calibratedWhite: CGFloat, alpha: CGFloat) {
         self.init(white: calibratedWhite, alpha: alpha)
     }

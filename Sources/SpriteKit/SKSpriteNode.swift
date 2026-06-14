@@ -1,7 +1,7 @@
 import KitABI
 
 public final class SKSpriteNode: SKNode {
-    public var texture: SKTexture? { didSet { if size == .zero, let t = texture { size = t.size } } }
+    public var texture: SKTexture? { didSet { if size == .zero, let t = texture { size = t._size } } }
     public var normalTexture: SKTexture?
     public var color: SKColor = .white
     public var colorBlendFactor: CGFloat = 0
@@ -22,6 +22,10 @@ public final class SKSpriteNode: SKNode {
     public var warpGeometry: SKWarpGeometry?
     public var subdivisionLevels: Int = 0
 
+    // Cull radius for the world pass: the sprite's larger dimension (full, not
+    // half — generous so a sprite never pops at the viewport edge).
+    override var _cullExtent: CGFloat { size.width > size.height ? size.width : size.height }
+
     public init(color: SKColor, size: CGSize) {
         self.color = color
         self.size = size
@@ -40,20 +44,44 @@ public final class SKSpriteNode: SKNode {
     }
     public init(texture: SKTexture?) {
         self.texture = texture
-        self.size = texture?.size ?? CGSize(width: 32, height: 32)
+        self.size = texture?._size ?? CGSize(width: 32, height: 32)
+        super.init()
+    }
+    public override init() {
+        // Apple's SKSpriteNode() has size .zero (an invisible container until a
+        // texture/size is set). The game uses it as a parent for an emoji
+        // SKLabelNode child, so it must draw NOTHING — a non-zero default here
+        // renders a white fill-rect box behind every emoji.
+        self.size = .zero
         super.init()
     }
     public init(texture: SKTexture?, normalMap nt: SKTexture?) {
         self.texture = texture
         self.normalTexture = nt
-        self.size = texture?.size ?? CGSize(width: 32, height: 32)
+        self.size = texture?._size ?? CGSize(width: 32, height: 32)
         super.init()
     }
     public init(imageNamed name: String) {
         let t = SKTexture(imageNamed: name)
+        t.resolvePending()   // images are manifest-preloaded, so size is known now
         self.texture = t
-        self.size = CGSize(width: 32, height: 32)
+        // Apple sizes the sprite to the texture's natural size. The old hardcoded
+        // 32×32 made the ship ~3× too small and drove the hero/canape physics
+        // radii negative (size/2 - 18 < 0 → the IndexSizeError crash). Fall back
+        // to 32×32 only if the texture truly hasn't resolved yet.
+        self.size = (t._size.width > 0 && t._size.height > 0) ? t._size : CGSize(width: 32, height: 32)
         super.init()
+    }
+
+    // Deep copy (SKNode.copy override) so `sprite.copy() as! SKSpriteNode` works.
+    public override func copy() -> SKNode {
+        let s = SKSpriteNode(texture: texture, color: color, size: size)
+        s.position = position; s.zPosition = zPosition; s.zRotation = zRotation
+        s.xScale = xScale; s.yScale = yScale; s.alpha = alpha
+        s.name = name; s.isHidden = isHidden; s.speed = speed
+        s.anchorPoint = anchorPoint; s.colorBlendFactor = colorBlendFactor; s.blendMode = blendMode
+        for c in children { s.addChild(c.copy()) }
+        return s
     }
 
     // Override SKNode.frame so calculateAccumulatedFrame / hit-testing reports
@@ -176,8 +204,8 @@ public final class SKSpriteNode: SKNode {
     // their natural pixel size; edges stretch along one axis; center stretches
     // both. Apple's centerRect is in unit (0..1) coordinates.
     private func draw9Slice(_ t: SKTexture, dx: Float, dy: Float, dw: Float, dh: Float) {
-        let tw = Float(t.size.width  > 0 ? t.size.width  : CGFloat(dw))
-        let th = Float(t.size.height > 0 ? t.size.height : CGFloat(dh))
+        let tw = Float(t._size.width  > 0 ? t._size.width  : CGFloat(dw))
+        let th = Float(t._size.height > 0 ? t._size.height : CGFloat(dh))
         let cr = centerRect
         // Source rect corners in source pixel coordinates.
         let sLeft   = Float(cr.minX) * tw

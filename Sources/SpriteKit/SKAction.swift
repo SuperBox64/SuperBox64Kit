@@ -33,6 +33,9 @@ public final class SKAction {
         kind = k
         duration = d
     }
+    // No-arg init — Apple allows `var a = SKAction()` (an empty placeholder the
+    // game reassigns before running). Defaults to a zero-duration wait.
+    public convenience init() { self.init(.wait, 0) }
 
     public static func moveBy(x: CGFloat, y: CGFloat, duration d: TimeInterval) -> SKAction { SKAction(.moveBy(x, y), d) }
     public static func move(by v: CGVector, duration d: TimeInterval) -> SKAction { SKAction(.moveBy(v.dx, v.dy), d) }

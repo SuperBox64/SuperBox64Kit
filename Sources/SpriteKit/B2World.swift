@@ -1,5 +1,31 @@
 import CBox2D
 
+// Apple-faithful collision filter (registered on every world). SpriteKit's
+// collisionBitMask is ONE-WAY and OR-combined across the two bodies, whereas
+// Box2D's built-in category/mask filter is a symmetric AND. To match SpriteKit
+// EXACTLY we make the broadphase permissive (every solid shape masks in
+// everything — see shapeDef) and decide the real collision here, with
+// SpriteKit's precise rule:
+//
+//   collide ⇔ (A.category & B.collisionMask) ≠ 0  OR  (B.category & A.collisionMask) ≠ 0
+//
+// This is what keeps a body inside a boundary whose own collisionMask is 0 (the
+// world edge loop) and stops the tractor/world from grabbing bodies that didn't
+// opt in. Sensor shapes always pass so the kit's contact-detection twins keep
+// surfacing every overlap to drainBeginContacts. Any lookup failure defaults to
+// "collide" so a missing registry entry can never silently drop physics.
+func sb64AppleCollisionFilter(_ sa: b2ShapeId, _ sb: b2ShapeId, _ ctx: UnsafeMutableRawPointer?) -> Bool {
+    if b2Shape_IsSensor(sa) || b2Shape_IsSensor(sb) { return true }
+    guard let ra = b2Body_GetUserData(b2Shape_GetBody(sa)),
+          let rb = b2Body_GetUserData(b2Shape_GetBody(sb)) else { return true }
+    let slotA = Int32(Int(bitPattern: UnsafeRawPointer(ra)) - 1)
+    let slotB = Int32(Int(bitPattern: UnsafeRawPointer(rb)) - 1)
+    guard let pa = SKPhysicsWorld.registry[slotA],
+          let pb = SKPhysicsWorld.registry[slotB] else { return true }
+    return (pa.categoryBitMask & pb.collisionBitMask) != 0
+        || (pb.categoryBitMask & pa.collisionBitMask) != 0
+}
+
 // MARK: - Box2D v3 backend (replaces the C++ cbox2d bridge; Swift calls C directly)
 
 // Coordinates are SpriteKit points treated as Box2D length units. Telling Box2D
@@ -263,6 +289,11 @@ enum B2 {
     static func setAngularVelocity(_ id: Int32, _ w: Float) {
         guard let b = body(id) else { return }
         b2Body_SetAngularVelocity(b, w)
+    }
+
+    static func setLinearDamping(_ id: Int32, _ d: Float) {
+        guard let b = body(id) else { return }
+        b2Body_SetLinearDamping(b, d)
     }
 
     static func getAngularVelocity(_ id: Int32) -> Float {

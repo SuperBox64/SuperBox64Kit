@@ -169,6 +169,36 @@ public enum SKSceneLoader {
             }
         case "SKCameraNode":
             node = SKCameraNode()
+        case "SKTileMapNode":
+            // Rebuild the tile map from sks2json cells so GameWorld can read each
+            // cell's tileDefinition(name + userData) — the level geometry/spawns.
+            let cols = json["numberOfColumns"]?.intValue ?? 0
+            let rows = json["numberOfRows"]?.intValue ?? 0
+            let tsz = readSize(json["tileSize"]) ?? .zero
+            let tm = SKTileMapNode(tileSet: SKTileSet(), columns: cols, rows: rows, tileSize: tsz)
+            if let cells = json["cells"]?.arrayValue {
+                for cell in cells {
+                    guard let col = cell["column"]?.intValue, let row = cell["row"]?.intValue else { continue }
+                    let def = SKTileDefinition()
+                    if let nm = cell["name"]?.stringValue { def.name = nm }
+                    if let fh = cell["flipHorizontally"]?.boolValue { def.flipHorizontally = fh }
+                    if let fv = cell["flipVertically"]?.boolValue { def.flipVertically = fv }
+                    if let texs = cell["textures"]?.arrayValue {
+                        def.textures = texs.compactMap { $0.stringValue }.map { SKTexture(imageNamed: $0) }
+                    }
+                    if let ud = cell["userData"]?.objectValue, !ud.isEmpty {
+                        let dict = NSMutableDictionary()
+                        for (k, v) in ud {
+                            if let b = v.boolValue        { dict[k] = b }
+                            else if let d = v.doubleValue { dict[k] = d }
+                            else if let s = v.stringValue { dict[k] = s }
+                        }
+                        def.userData = dict
+                    }
+                    tm.setTileGroup(SKTileGroup(tileDefinition: def), andTileDefinition: def, forColumn: col, row: row)
+                }
+            }
+            node = tm
         default:
             node = SKNode()
         }

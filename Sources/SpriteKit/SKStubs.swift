@@ -224,17 +224,23 @@ public final class SKConstraint {
 // that lean on it for level loading will need a parallel level-loader bridge.
 // =============================================================================
 public final class SKReferenceNode: SKNode {
-    public let fileName: String?
-    public let url: String?
+    public private(set) var fileName: String?
+    public private(set) var url: String?
     public override init() {
         fileName = nil
         url = nil
         super.init()
     }
-    public init(fileNamed name: String) {
+    // Failable: loads "<name>.json" (compiled from the level .sks by sks2json)
+    // via SKSceneLoader and attaches the resulting scene as a child, so the
+    // game's `referenceNode.children.first?.children` yields the tile-map layers.
+    // Returns nil when the level JSON isn't found (the game's guard handles it).
+    public init?(fileNamed name: String) {
+        guard let scene = SKSceneLoader.loadScene(fileNamed: name) else { return nil }
         fileName = name
         url = nil
         super.init()
+        addChild(scene)
     }
     public init(url: URL) {
         fileName = nil
@@ -283,9 +289,16 @@ public final class SKTextureAtlas {
 public final class CIFilter {
     public let name: String
     public var inputRadius: CGFloat = 0
-    public init?(name: String, parameters: [String: Double]? = nil) {
+    public init?(name: String, parameters: [String: Any]? = nil) {
         self.name = name
-        if let r = parameters?["inputRadius"] { inputRadius = CGFloat(r) }
+        // Game code passes a mixed-type dict (Float/CGFloat/Double); read the
+        // radius regardless of the concrete numeric type it arrives as.
+        if let v = parameters?["inputRadius"] {
+            if let r = v as? CGFloat { inputRadius = r }
+            else if let r = v as? Double { inputRadius = CGFloat(r) }
+            else if let r = v as? Float { inputRadius = CGFloat(r) }
+            else if let r = v as? Int { inputRadius = CGFloat(r) }
+        }
     }
 }
 
@@ -310,9 +323,13 @@ public class SKEffectNode: SKNode {
         // renderTree (see SKEffectNode-specific override below).
     }
 
-    override func renderTree(parentAlpha: CGFloat) {
+    override func renderTree(parentAlpha: CGFloat, worldX: CGFloat = 0, worldY: CGFloat = 0) {
         if isHidden || alpha <= 0 { return }
         let eff = parentAlpha * alpha
+        // Children render into bounded offscreen canvases below (origin-relative),
+        // so world-space culling can't apply here — turn it off for this subtree.
+        let _savedCull = SKNode._cullRect; SKNode._cullRect = nil
+        defer { SKNode._cullRect = _savedCull }
         gfx_save()
         gfx_translate(Float(position.x), Float(position.y))
         if zRotation != 0 { gfx_rotate(Float(zRotation * 180.0 / Double.pi)) }
@@ -420,14 +437,16 @@ public final class SKCropNode: SKEffectNode {
     public var maskNode: SKNode?
     public override init() { super.init() }
 
-    override func renderTree(parentAlpha: CGFloat) {
+    override func renderTree(parentAlpha: CGFloat, worldX: CGFloat = 0, worldY: CGFloat = 0) {
         guard let mask = maskNode else {
             // No mask: behave like a transparent container.
-            super.renderTree(parentAlpha: parentAlpha)
+            super.renderTree(parentAlpha: parentAlpha, worldX: worldX, worldY: worldY)
             return
         }
         if isHidden || alpha <= 0 { return }
         let eff = parentAlpha * alpha
+        let _savedCull = SKNode._cullRect; SKNode._cullRect = nil
+        defer { SKNode._cullRect = _savedCull }
 
         // Bounds in our local coordinate space.
         let frame = calculateAccumulatedFrame()
@@ -485,7 +504,7 @@ public final class SKFieldNode: SKNode {
     public var strength: Float = 1
     public var falloff: Float = 0
     public var minimumRadius: Float = 0
-    public var region: Any?
+    public var region: SKRegion?
     public var direction = CGVector.zero
     public var isExclusive: Bool = false
     public var categoryBitMask: UInt32 = 0xFFFFFFFF
@@ -568,6 +587,9 @@ public final class SKTileDefinition {
     public var timePerFrame: TimeInterval = 0
     public var placementWeight: Int = 1
     public var userData: NSMutableDictionary? = nil
+    public var flipHorizontally = false
+    public var flipVertically = false
+    public var rotation: Int = 0
     public init() {}
     public init(texture: SKTexture) { textures = [texture] }
     public init(texture: SKTexture, size: CGSize) {
@@ -591,6 +613,7 @@ public final class SKTileGroup {
         name = nil
         self.rules = rules
     }
+    public static func empty() -> SKTileGroup { SKTileGroup() }
 }
 public final class SKTileSet {
     public let name: String?
@@ -598,31 +621,68 @@ public final class SKTileSet {
     public init(named: String) { self.name = named }
 }
 public final class SKTileMapNode: SKNode {
-    public let numberOfColumns: Int
-    public let numberOfRows: Int
-    public let tileSize: CGSize
+    public var numberOfColumns: Int
+    public var numberOfRows: Int
+    public var tileSize: CGSize
     public var tileSet: SKTileSet
     public var color: SKColor = .clear
     public var colorBlendFactor: CGFloat = 0
     public var enableAutomapping: Bool = false
 
     var grid: [SKTileGroup?]
+    var defs: [SKTileDefinition?]            // per-cell tile definition (name + userData)
 
+    // Full map extent in the parent's space, centered on the node's position
+    // (tiles are laid out centered — see centerOfTile). SKNode's default frame
+    // is zero-size; without this override the game's `rockBounds = rocky.frame`
+    // collapsed the world boundary AND the parallax tiling to nothing, so the
+    // ship was confined to a tiny box and the background never repeated. Matches
+    // SpriteKit's SKTileMapNode.mapSize / frame.
+    public var mapSize: CGSize {
+        CGSize(width: CGFloat(numberOfColumns) * tileSize.width,
+               height: CGFloat(numberOfRows) * tileSize.height)
+    }
+    public override var frame: CGRect {
+        let s = mapSize
+        return CGRect(x: position.x - s.width / 2, y: position.y - s.height / 2,
+                      width: s.width, height: s.height)
+    }
+
+    public override init() {
+        self.tileSet = SKTileSet()
+        self.numberOfColumns = 0
+        self.numberOfRows = 0
+        self.tileSize = .zero
+        self.grid = []
+        self.defs = []
+        super.init()
+    }
     public init(tileSet: SKTileSet, columns: Int, rows: Int, tileSize: CGSize) {
         self.tileSet = tileSet
         self.numberOfColumns = columns
         self.numberOfRows = rows
         self.tileSize = tileSize
         self.grid = Array(repeating: nil, count: columns * rows)
+        self.defs = Array(repeating: nil, count: columns * rows)
         super.init()
     }
+    private func idx(_ col: Int, _ row: Int) -> Int? {
+        if col < 0 || row < 0 || col >= numberOfColumns || row >= numberOfRows { return nil }
+        return row * numberOfColumns + col
+    }
     public func setTileGroup(_ group: SKTileGroup?, forColumn col: Int, row: Int) {
-        if col < 0 || row < 0 || col >= numberOfColumns || row >= numberOfRows { return }
-        grid[row * numberOfColumns + col] = group
+        if let i = idx(col, row) { grid[i] = group }
+    }
+    public func setTileGroup(_ group: SKTileGroup?, andTileDefinition def: SKTileDefinition, forColumn col: Int, row: Int) {
+        if let i = idx(col, row) { grid[i] = group; defs[i] = def }
     }
     public func tileGroup(atColumn col: Int, row: Int) -> SKTileGroup? {
-        if col < 0 || row < 0 || col >= numberOfColumns || row >= numberOfRows { return nil }
-        return grid[row * numberOfColumns + col]
+        guard let i = idx(col, row) else { return nil }
+        return grid[i]
+    }
+    public func tileDefinition(atColumn col: Int, row: Int) -> SKTileDefinition? {
+        guard let i = idx(col, row) else { return nil }
+        return defs[i]
     }
     public func centerOfTile(atColumn col: Int, row: Int) -> CGPoint {
         let x = (CGFloat(col) - CGFloat(numberOfColumns - 1) / 2) * tileSize.width
@@ -697,10 +757,17 @@ public final class SKVideoNode: SKNode {
 // =============================================================================
 public final class SKRegion {
     public var path: CGPath?
+    // Approximate radius of the region from its origin, so SKFieldNode can scope
+    // its force to bodies INSIDE the region (Apple semantics). Infinite by
+    // default = whole scene.
+    var radius: CGFloat = .greatestFiniteMagnitude
     public init() {}
-    public init(radius: Float) {}
-    public init(size: CGSize) {}
-    public init(path: CGPath) { self.path = path }
+    public init(radius r: Float) { radius = CGFloat(r) }
+    public init(size: CGSize) { radius = max(size.width, size.height) / 2 }
+    public init(path p: CGPath) {
+        self.path = p
+        radius = p.maxRadiusFromOrigin()
+    }
 }
 
 

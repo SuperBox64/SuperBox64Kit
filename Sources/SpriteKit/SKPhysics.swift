@@ -39,6 +39,14 @@ public final class SKPhysicsBody {
     var _velocity = CGVector.zero
     public var velocity: CGVector {
         get {
+            // Read-after-write within a frame must return the pending value, not
+            // the stale Box2D velocity from last step. The joystick relies on
+            // this: FlightYokePilot sets velocity, then does
+            // `applyImpulse(...)` and `velocity.dx = clamp(velocity.dx)` — a
+            // read-modify-write. If the getter returned Box2D's not-yet-updated
+            // velocity (≈0 before the step flush), the clamp wrote ≈0 back and
+            // the ship never moved. Honor the dirty pending value first.
+            if velocityDirty { return _velocity }
             if bodyId >= 0 {
                 let (vx, vy) = B2.getVelocity(bodyId)
                 return CGVector(dx: CGFloat(vx) / Self.appleVelocityScale,
@@ -51,7 +59,9 @@ public final class SKPhysicsBody {
             velocityDirty = true
         }
     }
-    public var linearDamping: CGFloat = 0.1
+    public var linearDamping: CGFloat = 0.1 {
+        didSet { if bodyId >= 0 { B2.setLinearDamping(bodyId, Float(linearDamping)) } }
+    }
     public var friction: CGFloat = 0.2
     public var restitution: CGFloat = 0.2
     public var mass: CGFloat = 1 { didSet { massExplicit = true } }
@@ -60,6 +70,7 @@ public final class SKPhysicsBody {
     public var usesPreciseCollisionDetection = false   // no-op: Box2D continuous detection
     public var fieldBitMask: UInt32 = 0xFFFFFFFF       // no-op: SKFieldNode not yet implemented
     public var pinned = false                          // no-op
+    public var isResting = false                       // no-op (single-threaded; not simulated)
     public var density: CGFloat = 1                    // no-op (mass drives the body)
     public var angularDamping: CGFloat = 0.1           // no-op
     public var angularVelocity: CGFloat = 0 { didSet { angularDirty = true } }
@@ -87,6 +98,9 @@ public final class SKPhysicsBody {
     }
     let shape: Shape
 
+    // No-arg init — Apple allows `SKPhysicsBody()` (a placeholder body the game
+    // assigns to a node and then configures). Defaults to a unit rectangle.
+    public init() { shape = .rect(1, 1) }
     public init(rectangleOf size: CGSize) { shape = .rect(size.width, size.height) }
     public init(rectangleOf size: CGSize, center: CGPoint) { shape = .rect(size.width, size.height) }
     public init(circleOfRadius r: CGFloat) { shape = .circle(r) }
@@ -193,9 +207,15 @@ public final class SKPhysicsBody {
         // pair is generated for either purpose, then mark contact-only bodies
         // (no collision intent) as sensors so they generate the event with no
         // impulse. The post-step drain re-applies Apple's contactTest OR.
-        let mask = collisionBitMask
         let dyn = isDynamic
-        let sensor = isSensor || collisionBitMask == 0
+        // SpriteKit collisionBitMask is one-way; Box2D's is two-way AND. A static
+        // body never moves, so letting it accept every collision makes the
+        // dynamic body's own collisionMask the sole decider — matching SpriteKit
+        // for dynamic-vs-static (platforms/walls). A collisionMask==0 STATIC body
+        // stays solid (the world edge loop); only a dynamic collisionMask==0 body
+        // is approximated as a sensor.
+        let mask = dyn ? collisionBitMask : UInt32(0xFFFFFFFF)
+        let sensor = isSensor || (collisionBitMask == 0 && dyn)
         // Apple honors these per body; hand them to the next B2 creation.
         B2.pendingProps = B2.BodyProps(friction: Float(friction),
                                        restitution: Float(restitution),
@@ -455,7 +475,7 @@ public final class SKPhysicsWorld {
     // can see where the physics shapes actually sit relative to the
     // sprites. OFF by default to match Apple SpriteKit (SKView.showsPhysics
     // is false by default); opt in via scene.physicsWorld.showsPhysics = true.
-    public var showsPhysics: Bool = false
+    public var showsPhysics: Bool = true   // DEBUG: physics-body overlay on by default this session
 
     // Walks every body in the registry and strokes its shape on the
     // active draw target. Called from SKView.render after the scene
@@ -640,7 +660,15 @@ public final class SKPhysicsWorld {
     // B2.applyForce. Field models honored: linearGravity, radialGravity,
     // vortex, drag, spring, magnetic (treated as radialGravity with sign),
     // noise/turbulence/electric/customField left as no-ops.
+    // Global kill-switch for SKFieldNode forces. Apple applies a field to every
+    // body in its region every frame; the UFO portals/tractor were sucking the
+    // whole level toward them. Disabled for now (per debugging) — the tractor is
+    // meant to grab only items touching its small beam, which we'll model as a
+    // local contact, not a global field. Flip to true once fields are scoped.
+    nonisolated(unsafe) public static var fieldsEnabled = false
+
     private func applyFields(_ scene: SKNode, dt: TimeInterval) {
+        guard SKPhysicsWorld.fieldsEnabled else { return }
         var fields: [SKFieldNode] = []
         collectFields(scene, into: &fields)
         if fields.isEmpty { return }
@@ -653,6 +681,10 @@ public final class SKPhysicsWorld {
                 let dy: CGFloat = p.y - fp.y
                 let dist: CGFloat = (dx*dx + dy*dy).squareRoot()
                 if f.minimumRadius > 0 && dist < CGFloat(f.minimumRadius) { continue }
+                // Scope the field to its region: a portal's pull only affects
+                // bodies inside its SKRegion (Apple), not the whole scene — else
+                // one field sucks every body toward it.
+                if let region = f.region, dist > region.radius { continue }
                 let atten: CGFloat = (f.falloff > 0 && dist > 0)
                     ? 1 / CGFloat(sb64_pow(Double(dist), Double(f.falloff)))
                     : 1
