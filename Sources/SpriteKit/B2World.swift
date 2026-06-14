@@ -145,7 +145,10 @@ enum B2 {
                        _ dynamic: Bool, _ cat: UInt32, _ mask: UInt32, _ sensor: Bool) -> Int32 {
         let (id, body) = newBody(x, y, dynamic)
         var sd = shapeDef(cat, mask, sensor)
-        var poly = b2MakeBox(hw, hh)
+        // Floor half-extents: a zero-size b2MakeBox is a degenerate, zero-area shape
+        // that neither collides nor draws. Mirrors the .rect path's max(...,0.5) so
+        // any degenerate AABB fallback still yields a real, visible, colliding body.
+        var poly = b2MakeBox(max(hw, 0.5), max(hh, 0.5))
         b2CreatePolygonShape(body, &sd, &poly)
         var twin = sensorDef()
         b2CreatePolygonShape(body, &twin, &poly)

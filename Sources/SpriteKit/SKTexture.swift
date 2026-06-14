@@ -33,12 +33,11 @@ public class SKTexture {
     // Apple's modern SpriteKit bindings expose the natural texture extent as a
     // METHOD `size() -> CGSize` (the historical ObjC `-size` selector). Game
     // source calls `texture.size()`, so we match that shape exactly.
-    // Resolve a deferred-name texture before reporting size. The angular tile
-    // bodies compute their polygon path from centerTexture.size(); if the texture
-    // hadn't resolved this returned (0,0) and the path collapsed to a point, so
-    // the trapezoid grass/dirt slopes got a degenerate (invisible, no-collision)
-    // body and the unicorn fell through. Resolving here yields the real size so
-    // the polygon matches the art.
+    // Report the real texture size (resolving a deferred-name lookup first), exactly
+    // like Apple SpriteKit. A tile that reads .size() to build its polygon body must
+    // get the true art dimensions — the size is NOT hardcoded. If a name comes back
+    // .zero it means that image isn't in the bundle/manifest; the asset pipeline must
+    // export it (Apple ships these in GameGrass_placeholders.spriteatlas).
     public func size() -> CGSize { _ = resolvePending(); return _size }
     public var filteringMode: SKTextureFilteringMode = .linear
     public var usesMipmaps: Bool = false
