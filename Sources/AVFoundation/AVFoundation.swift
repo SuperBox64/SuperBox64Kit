@@ -52,7 +52,10 @@ public extension AVAudioPlayerDelegate {
 
 // ---- AVAudioPlayer --------------------------------------------------------
 public final class AVAudioPlayer {
-    public var volume: Float = 1.0 { didSet { if voice >= 0 { snd_set_volume(voice, volume) } } }
+    // snd_play / snd_set_volume take 0..100; Apple's AVAudioPlayer.volume is 0..1.
+    // Passing 0..1 straight through played the background music at ~1% — the
+    // "music way too weak" bug. Scale to 0..100 like the SKAudioNode shim does.
+    public var volume: Float = 1.0 { didSet { if voice >= 0 { snd_set_volume(voice, volume * 100) } } }
     public var numberOfLoops: Int = 0          // -1 = infinite (SpriteKit semantics)
     public var rate: Float = 1.0
     public var enableRate = false
@@ -84,7 +87,7 @@ public final class AVAudioPlayer {
     @discardableResult public func play() -> Bool {
         if buffer == 0 { return false }
         if voice >= 0 { snd_stop(voice) }
-        voice = snd_play(buffer, volume, numberOfLoops < 0 ? 1 : 0)
+        voice = snd_play(buffer, volume * 100, numberOfLoops < 0 ? 1 : 0)
         return voice >= 0
     }
     public func pause() {

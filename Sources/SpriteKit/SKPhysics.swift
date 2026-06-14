@@ -36,7 +36,21 @@ public final class SKPhysicsBody {
         didSet { if bodyId >= 0, collisionBitMask != oldValue { syncFilter() } }
     }
     public var isDynamic = true {
-        didSet { if bodyId >= 0, isDynamic != oldValue { syncFilter() } }
+        didSet {
+            if bodyId >= 0, isDynamic != oldValue {
+                // Flip the Box2D body type, not just the filter — a laser-struck
+                // tile is set isDynamic=true so it spins in the air; without this it
+                // stayed static and the impulse/torque/angularVelocity did nothing.
+                B2.setBodyType(bodyId, isDynamic)
+                if isDynamic {
+                    // A newly-dynamic body needs positive mass + rotational inertia
+                    // to respond to applyImpulse/applyTorque/angularVelocity.
+                    let m = max(0.01, massExplicit ? mass : CGFloat(appleAreaPts2() / 22500.0))
+                    B2.setMass(bodyId, Float(m), Float(boundingRadius()))
+                }
+                syncFilter()
+            }
+        }
     }
     public var affectedByGravity = true
     public var allowsRotation = true

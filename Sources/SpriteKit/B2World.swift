@@ -315,6 +315,16 @@ enum B2 {
         b2Body_SetMassData(b, md)
     }
 
+    // Switch a live body between static and dynamic. SpriteKit lets a game flip
+    // SKPhysicsBody.isDynamic at runtime (UFO Emoji turns a laser-struck grass/dirt
+    // tile dynamic so it spins weightlessly in the air). The kit set body type only
+    // at creation, so the flip did nothing in Box2D and the tile stayed frozen.
+    static func setBodyType(_ id: Int32, _ dynamic: Bool) {
+        guard let b = body(id) else { return }
+        b2Body_SetType(b, dynamic ? b2_dynamicBody : b2_staticBody)
+        b2Body_SetAwake(b, true)
+    }
+
     static func applyTorque(_ id: Int32, _ t: Float) {
         guard let b = body(id) else { return }
         b2Body_ApplyTorque(b, t, true)
