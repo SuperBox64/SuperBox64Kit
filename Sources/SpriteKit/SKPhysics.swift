@@ -320,10 +320,17 @@ public final class SKPhysicsBody {
             if pts.count >= 3 {
                 bodyId = B2.addPolygon(x, y, flatXY(pts), dyn, cat, mask, sensor)
             }
+            let polyOK = bodyId >= 0
             if bodyId < 0 {
                 let r = boundingBox(of: pts)
                 bodyId = B2.addBox(x + Float(r.midX), y + Float(r.midY),
                                    Float(r.width/2), Float(r.height/2), dyn, cat, mask, sensor)
+            }
+            // TEMP diagnostic: grass(256)/dirt(2) polygon tiles — see if the
+            // angular trapezoid bodies build as real polygons or degenerate.
+            if cat == 256 || cat == 2 {
+                let p = pts.map { "(\(Int($0.x)),\(Int($0.y)))" }.joined(separator: " ")
+                _dbgLog("POLY cat=\(cat) n=\(pts.count) polyOK=\(polyOK) id=\(bodyId) pos=(\(Int(x)),\(Int(y))) pts=\(p)")
             }
         case let .edgeFromTo(a, b):
             bodyId = B2.addEdge(Float(a.x), Float(a.y), Float(b.x), Float(b.y), cat, mask)
