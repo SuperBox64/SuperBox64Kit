@@ -193,7 +193,11 @@ func encode(_ node: SKNode) -> [String: Any] {
         d["fontSize"] = l.fontSize
         if let f = l.fontName { d["fontName"] = f }
         if let c = l.fontColor { d["fontColor"] = rgba(c) }
-        d["horizontalAlignment"] = ["left","center","right"][l.horizontalAlignmentMode.rawValue]
+        // SKLabelHorizontalAlignmentMode raw values are center=0, left=1, right=2
+        // (NOT left-first). The array MUST be indexed in that order or a .center
+        // label exports as "left" and renders shifted-right (the title-screen
+        // copyright was off-centre because of this).
+        d["horizontalAlignment"] = ["center","left","right"][l.horizontalAlignmentMode.rawValue]
         d["verticalAlignment"]   = ["baseline","center","top","bottom"][l.verticalAlignmentMode.rawValue]
     }
     if let sh = node as? SKShapeNode {

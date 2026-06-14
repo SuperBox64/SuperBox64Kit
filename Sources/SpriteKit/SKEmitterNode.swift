@@ -94,9 +94,17 @@ public final class SKEmitterNode: SKNode {
 
     public override init() { super.init() }
 
-    // Programmatic load from a particle file (.sks). Without a parser we hand
-    // back an emitter with defaults — call sites compile.
-    public init?(fileNamed name: String) { super.init() }
+    // Programmatic load from a particle file. The .sks was converted to JSON by
+    // sks2json and ships under assets/particles/<name>.json; populate THIS
+    // instance from it (a failable init can't return the loader's fresh object).
+    // Was a no-op stub, so every SKEmitterNode(fileNamed:) came back with
+    // particleBirthRate 0 and emitted NOTHING — the entire game had no particle
+    // effects (black-hole/level-up, explosions, smoke, aura, …). Return nil when
+    // the file is missing so `if let` call sites skip cleanly, like Apple.
+    public init?(fileNamed name: String) {
+        super.init()
+        guard SKSceneLoader.applyEmitterFile(name, to: self) else { return nil }
+    }
 
     public func resetSimulation() {
         particles.removeAll()
@@ -233,19 +241,31 @@ public final class SKEmitterNode: SKNode {
         // Sort order honored only when oldestFirst (reverse drawing). dontCare/
         // oldestLast keep insertion order (newest on top).
         let list: [Particle] = particleRenderOrder == .oldestFirst ? particles.reversed() : particles
+        if list.isEmpty { return }
+        // Apply the emitter's blend mode once for the whole batch. screen/add make
+        // particles GLOW (the white-hole/level-up effect is screen); reset after.
+        let blendArg: Int32
+        switch particleBlendMode {
+        case .add:      blendArg = 1
+        case .multiply: blendArg = 2
+        case .screen:   blendArg = 3
+        default:        blendArg = 0
+        }
+        if blendArg != 0 { gfx_set_blend(blendArg) }
         for p in list {
             let aOut = max(0, min(1, p.alpha)) * alpha * p.a
             if aOut <= 0.001 { continue }
-            let bf = p.blendFactor
-            // Blend particleColor into the per-particle (r,g,b) channel by blendFactor.
-            let r = particleColor.r * bf + p.r * (1 - bf)
-            let g = particleColor.g * bf + p.g * (1 - bf)
-            let b = particleColor.b * bf + p.b * (1 - bf)
-            let c = SKColor(red: r, green: g, blue: b, alpha: aOut)
-
             if let tex = particleTexture {
-                // Textured quad — pull the registered image handle through
-                // gfx_draw_image. Rotation honored via gfx_save/rotate/restore.
+                // particleColorBlendFactor tints the TEXTURE: 0 = texture's own
+                // colours (white tint), 1 = fully tinted by the particle's current
+                // colour (driven by particleColorSequence / drift). The old code
+                // tinted toward the flat, often-dark `particleColor`, so the
+                // sequence-coloured white-hole rendered near-black and looked
+                // missing. lerp(white -> particle colour) by blendFactor.
+                let bf = p.blendFactor
+                let c = SKColor(red:   1 + (p.r - 1) * bf,
+                                green: 1 + (p.g - 1) * bf,
+                                blue:  1 + (p.b - 1) * bf, alpha: aOut)
                 let w = Float(particleSize.width * p.scale)
                 let h = Float(particleSize.height * p.scale)
                 gfx_save()
@@ -254,10 +274,13 @@ public final class SKEmitterNode: SKNode {
                 gfx_draw_image(tex.handle, 0, 0, 0, 0, -w/2, -h/2, w, h, c.rgba)
                 gfx_restore()
             } else {
+                // Untextured: the particle is just its own colour.
+                let c = SKColor(red: p.r, green: p.g, blue: p.b, alpha: aOut)
                 let r = Float(max(0.5, particleSize.width / 2 * p.scale))
                 gfx_fill_circle(Float(p.x), Float(p.y), r, c.rgba)
             }
         }
+        if blendArg != 0 { gfx_set_blend(0) }
     }
 }
 

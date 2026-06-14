@@ -58,11 +58,18 @@ public enum SKSceneLoader {
         return node
     }
     public static func loadEmitter(fileNamed name: String) -> SKEmitterNode? {
-        guard let json = loadJSON(named: name) else { return nil }
         let emitter = SKEmitterNode()
-        applyCommonProps(json, to: emitter)
-        applyEmitterProps(json, to: emitter)
-        return emitter
+        return applyEmitterFile(name, to: emitter) ? emitter : nil
+    }
+
+    // Populate an EXISTING emitter from its particle JSON. SKEmitterNode(fileNamed:)
+    // configures `self` (a failable init can't swap in loadEmitter's fresh
+    // instance), so the load logic lives here and both paths share it.
+    static func applyEmitterFile(_ name: String, to e: SKEmitterNode) -> Bool {
+        guard let json = loadJSON(named: name) else { return false }
+        applyCommonProps(json, to: e)
+        applyEmitterProps(json, to: e)
+        return true
     }
 
     // ---- File loader ----------------------------------------------------------
@@ -252,6 +259,42 @@ public enum SKSceneLoader {
         if let texName = json["particleTexture"]?.stringValue {
             e.particleTexture = SKTexture(imageNamed: texName)
         }
+        if let bm = json["particleBlendMode"]?.intValue, let mode = SKBlendMode(rawValue: bm) {
+            e.particleBlendMode = mode
+        }
+        // Keyframe sequences ({"times":[…],"values":[…]}). Colours are [r,g,b,a]
+        // arrays; alpha/scale/blendFactor are scalars. These drive the per-particle
+        // ramps — e.g. the white-hole's white→cyan colour fade. Without them the
+        // particle stays its flat base colour for its whole life.
+        if let s = readColorSequence(json["particleColorSequence"])             { e.particleColorSequence = s }
+        if let s = readNumberSequence(json["particleAlphaSequence"])            { e.particleAlphaSequence = s }
+        if let s = readNumberSequence(json["particleScaleSequence"])            { e.particleScaleSequence = s }
+        if let s = readNumberSequence(json["particleColorBlendFactorSequence"]) { e.particleColorBlendFactorSequence = s }
+    }
+
+    private static func readColorSequence(_ v: JSONValue?) -> SKKeyframeSequence? {
+        guard let o = v?.objectValue,
+              let times = o["times"]?.arrayValue,
+              let vals  = o["values"]?.arrayValue,
+              !times.isEmpty, times.count == vals.count else { return nil }
+        var kfv: [SKKeyframeValue] = [], kft: [Double] = []
+        for (t, c) in zip(times, vals) {
+            guard let tt = t.doubleValue, let col = readColor(c) else { continue }
+            kfv.append(.color(col)); kft.append(tt)
+        }
+        return kfv.isEmpty ? nil : SKKeyframeSequence(keyframeValues: kfv, times: kft)
+    }
+    private static func readNumberSequence(_ v: JSONValue?) -> SKKeyframeSequence? {
+        guard let o = v?.objectValue,
+              let times = o["times"]?.arrayValue,
+              let vals  = o["values"]?.arrayValue,
+              !times.isEmpty, times.count == vals.count else { return nil }
+        var kfv: [SKKeyframeValue] = [], kft: [Double] = []
+        for (t, n) in zip(times, vals) {
+            guard let tt = t.doubleValue, let nn = n.doubleValue else { continue }
+            kfv.append(.number(nn)); kft.append(tt)
+        }
+        return kfv.isEmpty ? nil : SKKeyframeSequence(keyframeValues: kfv, times: kft)
     }
 
     private static func readSize(_ v: JSONValue?) -> CGSize? {
