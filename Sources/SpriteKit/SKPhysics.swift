@@ -281,7 +281,7 @@ public final class SKPhysicsBody {
                                        angularDamping: Float(angularDamping),
                                        gravityScale: affectedByGravity ? 1 : 0)
         switch shape {
-        case let .rect(w, h): bodyId = B2.addBox(x, y, Float(w/2), Float(h/2), dyn, cat, mask, sensor)
+        case let .rect(w, h): bodyId = B2.addBox(x, y, max(Float(w/2), 0.5), max(Float(h/2), 0.5), dyn, cat, mask, sensor)
         case let .circle(r):  bodyId = B2.addCircle(x, y, Float(r), dyn, cat, mask, sensor)
         case let .edgeLoop(rc):
             // Closed-loop chain of the rect's four corners (static).
@@ -334,6 +334,12 @@ public final class SKPhysicsBody {
             if m > 0 { B2.setMass(bodyId, Float(m), Float(boundingRadius())) }
         }
         SKPhysicsWorld.registry[bodyId] = self
+        // TEMP laser diagnostic — categoryBitMask 64 == laserbeam. Tells us if the
+        // projectile body is actually created (id>=0), its shape/size, and the
+        // velocity it carries from the copy().
+        if categoryBitMask == 64 {
+            _dbgLog("LASER body id=\(bodyId) shape=\(shape) pos=(\(Int(x)),\(Int(y))) dyn=\(dyn) sensor=\(sensor) v=(\(Int(_velocity.dx)),\(Int(_velocity.dy)))")
+        }
     }
 
     // Re-push Apple's collision filter to the live Box2D body when the game
@@ -885,6 +891,10 @@ public final class SKPhysicsWorld {
             guard let A = SKPhysicsWorld.registry[c.bodyA], let B = SKPhysicsWorld.registry[c.bodyB] else { continue }
             let hit = (A.categoryBitMask & B.contactTestBitMask) != 0
                    || (B.categoryBitMask & A.contactTestBitMask) != 0
+            // TEMP laser diagnostic: report any contact involving a laserbeam body.
+            if A.categoryBitMask == 64 || B.categoryBitMask == 64 {
+                _dbgLog("LASER contact catA=\(A.categoryBitMask) catB=\(B.categoryBitMask) hit=\(hit)")
+            }
             if hit { contactDelegate?.didBegin(SKPhysicsContact(A, B)) }
         }
     }

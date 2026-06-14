@@ -43,8 +43,16 @@ public final class SKSpriteNode: SKNode {
         super.init()
     }
     public init(texture: SKTexture?) {
+        // Resolve a deferred-name texture NOW so size reflects the real image.
+        // The laser is built as SKSpriteNode(texture: SKTexture(imageNamed:"laserbeam"))
+        // then SKPhysicsBody(rectangleOf: node.size); if the texture hadn't
+        // resolved, size was .zero -> a zero-size Box2D body (rejected, no
+        // collision) AND a zero-size sprite (invisible) — the laser "fired" sound
+        // but did nothing. Never accept a zero size.
+        texture?.resolvePending()
         self.texture = texture
-        self.size = texture?._size ?? CGSize(width: 32, height: 32)
+        let s = texture?._size ?? .zero
+        self.size = (s.width > 0 && s.height > 0) ? s : CGSize(width: 32, height: 32)
         super.init()
     }
     public override init() {
