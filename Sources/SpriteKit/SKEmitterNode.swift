@@ -252,6 +252,7 @@ public final class SKEmitterNode: SKNode {
         default:        blendArg = 0
         }
         if blendArg != 0 { gfx_set_blend(blendArg) }
+        particleTexture?.resolvePending()   // live handle for deferred-name textures
         for p in list {
             let aOut = max(0, min(1, p.alpha)) * alpha * p.a
             if aOut <= 0.001 { continue }
@@ -271,7 +272,11 @@ public final class SKEmitterNode: SKNode {
                 gfx_save()
                 gfx_translate(Float(p.x), Float(p.y))
                 if p.rotation != 0 { gfx_rotate(Float(p.rotation * 180.0 / Double.pi)) }
-                gfx_draw_image(tex.handle, 0, 0, 0, 0, -w/2, -h/2, w, h, c.rgba)
+                // sw/sh MUST be -1 (full-source sentinel), NOT 0. A 0-size source
+                // rect makes the runtime slice a 0×0 region (SVG) / throw (raster)
+                // and the particle draws nothing — the white-hole was invisible
+                // even though it spawned and moved. SKSpriteNode passes -1/-1 too.
+                gfx_draw_image(tex.handle, 0, 0, -1, -1, -w/2, -h/2, w, h, c.rgba)
                 gfx_restore()
             } else {
                 // Untextured: the particle is just its own colour.
