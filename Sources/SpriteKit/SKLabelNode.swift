@@ -47,6 +47,35 @@ public final class SKLabelNode: SKNode {
         super.init()
     }
 
+    // Deep copy (SKNode.copy override). The base SKNode.copy() builds a plain
+    // SKNode and copies none of the label's text/font state, so a copied label
+    // would render NOTHING and `node.copy() as! SKSpriteNode` subtrees that hold
+    // a label child (UFO Emoji's bomb 🧨 / monkey-laser 🍌, which live as label
+    // children of an otherwise-empty sprite) would lose their only visible
+    // content. Override so the clone is a real SKLabelNode carrying every field.
+    public override func copy() -> SKNode {
+        let l = SKLabelNode()
+        l.position = position; l.zPosition = zPosition; l.zRotation = zRotation
+        l.xScale = xScale; l.yScale = yScale; l.alpha = alpha
+        l.name = name; l.isHidden = isHidden; l.speed = speed
+        l._text = _text
+        l.fontSize = fontSize
+        l.fontName = fontName
+        l.fontColor = fontColor
+        l.horizontalAlignmentMode = horizontalAlignmentMode
+        l.verticalAlignmentMode = verticalAlignmentMode
+        l.numberOfLines = numberOfLines
+        l.preferredMaxLayoutWidth = preferredMaxLayoutWidth
+        l.lineBreakMode = lineBreakMode
+        l.attributedText = attributedText
+        l.color = color
+        l.colorBlendFactor = colorBlendFactor
+        l.blendMode = blendMode
+        if let b = physicsBody { l.physicsBody = b._clone() }
+        for c in children { l.addChild(c.copy()) }
+        return l
+    }
+
     // Resolve the font handle through font_by_name, retrying until the asset
     // loader has registered it (preload races scene init; first frame may see
     // handle 0, second frame the real one).

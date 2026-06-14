@@ -80,6 +80,11 @@ public final class SKSpriteNode: SKNode {
         s.xScale = xScale; s.yScale = yScale; s.alpha = alpha
         s.name = name; s.isHidden = isHidden; s.speed = speed
         s.anchorPoint = anchorPoint; s.colorBlendFactor = colorBlendFactor; s.blendMode = blendMode
+        // Clone the physics body so `sprite.copy() as! SKSpriteNode` is an
+        // independently-simulated duplicate (UFO Emoji adds only the .copy() of
+        // its laser/bomb template to the scene — without the body the copy never
+        // moves and the projectile never appears).
+        if let b = physicsBody { s.physicsBody = b._clone() }
         for c in children { s.addChild(c.copy()) }
         return s
     }
@@ -108,6 +113,13 @@ public final class SKSpriteNode: SKNode {
         // re-flip locally so the bitmap isn't drawn upside down
         gfx_save()
         gfx_scale(1, -1)
+        // A TEXTURED sprite's opacity is its NODE alpha (already applied via
+        // gfx_set_alpha) — the color is a TINT used only at colorBlendFactor, so
+        // its alpha must NOT dim the image. The menu logo ships color alpha 0 (no
+        // tint) and was rendering invisible. Force the image tint opaque when not
+        // tinting; only honor the color (incl. its alpha) once colorBlendFactor
+        // actually tints.
+        let texTint = colorBlendFactor <= 0.001 ? (color.rgba | 0xFF) : color.rgba
 
         // Shader path: when a SKShader is bound, route the texture through
         // gfx_shader_draw (WebGL2 pass) instead of a plain image blit. The
@@ -117,7 +129,7 @@ public final class SKSpriteNode: SKNode {
             sh.bindUniforms()
             let t0 = SKSpriteNode.kitClock()
             gfx_shader_draw(sh.handle, t.handle,
-                            -w * ax, -h * (1 - ay), w, h, t0, color.rgba)
+                            -w * ax, -h * (1 - ay), w, h, t0, texTint)
             gfx_restore()
             return
         }
@@ -131,7 +143,7 @@ public final class SKSpriteNode: SKNode {
                 gfx_lighting_draw(t.handle,
                                   normalTexture?.handle ?? 0,
                                   ptr.baseAddress, Int32(ptr.count / 8),
-                                  -w * ax, -h * (1 - ay), w, h, color.rgba)
+                                  -w * ax, -h * (1 - ay), w, h, texTint)
             }
             gfx_restore()
             return
@@ -141,7 +153,7 @@ public final class SKSpriteNode: SKNode {
         if let warp = warpGeometry as? SKWarpGeometryGrid {
             warp.render(srcImg: t.handle,
                         dstX: -w * ax, dstY: -h * (1 - ay), dstW: w, dstH: h,
-                        color: color.rgba)
+                        color: texTint)
             gfx_restore()
             return
         }
@@ -152,11 +164,11 @@ public final class SKSpriteNode: SKNode {
             let sr = t.sourceRect
             if sr == .zero {
                 gfx_draw_image(t.handle, 0, 0, -1, -1,
-                               -w * ax, -h * (1 - ay), w, h, color.rgba)
+                               -w * ax, -h * (1 - ay), w, h, texTint)
             } else {
                 gfx_draw_image(t.handle,
                                Float(sr.minX), Float(sr.minY), Float(sr.width), Float(sr.height),
-                               -w * ax, -h * (1 - ay), w, h, color.rgba)
+                               -w * ax, -h * (1 - ay), w, h, texTint)
             }
         } else {
             draw9Slice(t, dx: -w * ax, dy: -h * (1 - ay), dw: w, dh: h)

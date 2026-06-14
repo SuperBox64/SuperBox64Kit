@@ -250,6 +250,35 @@ enum B2 {
         b2Body_SetAwake(b, true)
     }
 
+    // Re-apply Apple's collision/category filter to a live body's SOLID shapes
+    // AFTER creation. SpriteKit lets a game flip collisionBitMask/categoryBitMask
+    // at runtime (the tractor beam sets the grabbed prize's masks to 0 so it
+    // passes through everything while it's sucked up); without this, the masks
+    // are frozen at createInWorld() and the prize stays solid in Box2D, so
+    // teleporting it upward de-penetrates (shoves) any body resting on it — the
+    // bad dino "rides" the tractored grass. We mirror shapeDef()'s exact encoding
+    // (solid mask | sensorBit, or 0 when the body is a sensor/collisionMask-0
+    // dynamic) and touch ONLY the solid shapes; the sensor-twin shapes keep their
+    // everything-mask so contact detection (drainBeginContacts) is unaffected.
+    static func setFilter(_ id: Int32, _ cat: UInt32, _ mask: UInt32, _ sensor: Bool) {
+        guard let b = body(id) else { return }
+        let count = Int(b2Body_GetShapeCount(b))
+        if count <= 0 { return }
+        var shapes = [b2ShapeId](repeating: b2ShapeId(), count: count)
+        let got = shapes.withUnsafeMutableBufferPointer { buf in
+            Int(b2Body_GetShapes(b, buf.baseAddress, Int32(count)))
+        }
+        for i in 0..<got {
+            let s = shapes[i]
+            if b2Shape_IsSensor(s) { continue }   // leave the contact-detection twin alone
+            var f = b2Shape_GetFilter(s)
+            f.categoryBits = UInt64(cat)
+            f.maskBits = sensor ? 0 : (UInt64(mask) | sensorBit)
+            b2Shape_SetFilter(s, f)
+        }
+        b2Body_SetAwake(b, true)
+    }
+
     static func getPosition(_ id: Int32) -> (Float, Float) {
         guard let b = body(id) else { return (0, 0) }
         let p = b2Body_GetPosition(b)

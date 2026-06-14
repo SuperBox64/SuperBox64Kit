@@ -28,10 +28,16 @@ public final class SKPhysicsContact {
 }
 
 public final class SKPhysicsBody {
-    public var categoryBitMask: UInt32 = 0xFFFFFFFF
-    public var contactTestBitMask: UInt32 = 0
-    public var collisionBitMask: UInt32 = 0xFFFFFFFF
-    public var isDynamic = true
+    public var categoryBitMask: UInt32 = 0xFFFFFFFF {
+        didSet { if bodyId >= 0, categoryBitMask != oldValue { syncFilter() } }
+    }
+    public var contactTestBitMask: UInt32 = 0   // contactTest is re-applied in the drain; no Box2D filter change
+    public var collisionBitMask: UInt32 = 0xFFFFFFFF {
+        didSet { if bodyId >= 0, collisionBitMask != oldValue { syncFilter() } }
+    }
+    public var isDynamic = true {
+        didSet { if bodyId >= 0, isDynamic != oldValue { syncFilter() } }
+    }
     public var affectedByGravity = true
     public var allowsRotation = true
     // 1:1 with SpriteKit: velocity is points/s and (since 150 pts/m) the on-screen
@@ -70,7 +76,9 @@ public final class SKPhysicsBody {
     public var restitution: CGFloat = 0.2
     public var mass: CGFloat = 1 { didSet { massExplicit = true } }
     var massExplicit = false
-    public var isSensor = false
+    public var isSensor = false {
+        didSet { if bodyId >= 0, isSensor != oldValue { syncFilter() } }
+    }
     public var usesPreciseCollisionDetection = false   // no-op: Box2D continuous detection
     public var fieldBitMask: UInt32 = 0xFFFFFFFF       // no-op: SKFieldNode not yet implemented
     public var pinned = false                          // no-op
@@ -178,6 +186,10 @@ public final class SKPhysicsBody {
         return out
     }
     public init(bodies: [SKPhysicsBody]) { shape = .rect(0, 0) }   // compound bodies: stub
+    // Internal shape-passthrough init so _clone() can faithfully reproduce
+    // polygon/edge-chain bodies (whose payload can't be reconstructed from a
+    // public initializer without re-flattening a path).
+    init(_shape s: Shape) { shape = s; if case .edgeChain = s { isDynamic = false } }
 
     public func applyImpulse(_ v: CGVector) { velocity = CGVector(dx: velocity.dx + v.dx, dy: velocity.dy + v.dy) }
     public func applyImpulse(_ v: CGVector, at point: CGPoint) { applyImpulse(v) }
@@ -185,6 +197,48 @@ public final class SKPhysicsBody {
     public func applyForce(_ v: CGVector, at point: CGPoint) { applyForce(v) }
     public func applyTorque(_ t: CGFloat) { B2.applyTorque(bodyId, Float(t)) }
     public func applyAngularImpulse(_ i: CGFloat) { B2.applyAngularImpulse(bodyId, Float(i)) }
+
+    // Reconstruct the same shape this body was built from. Used by _clone()
+    // (which can't see the private `shape` enum's payload through a copy of the
+    // struct value alone, and must rebuild via the matching initializer so the
+    // new body gets its own Box2D body on the next createInWorld()).
+    private func _rebuildSameShape() -> SKPhysicsBody {
+        switch shape {
+        case let .texture(sz): return SKPhysicsBody(rectangleOf: sz)   // map texture-shape -> rect
+        default:               return SKPhysicsBody(_shape: shape)     // rect/circle/edge/polygon: reuse payload
+        }
+    }
+
+    // Apple's SKPhysicsBody is NSCopying. SKNode.copy()/SKSpriteNode.copy() must
+    // clone the body so a duplicated node (laserDupe / DaBomb in UFO Emoji) gets
+    // its OWN simulated body — otherwise the copy has no physicsBody, never gets
+    // a Box2D body, never moves, and the projectile is invisible/frozen. bodyId
+    // is left at -1 so createBodies() builds a brand-new Box2D body for the copy.
+    func _clone() -> SKPhysicsBody {
+        let b = _rebuildSameShape()
+        b.categoryBitMask = categoryBitMask
+        b.contactTestBitMask = contactTestBitMask
+        b.collisionBitMask = collisionBitMask
+        b.isDynamic = isDynamic
+        b.affectedByGravity = affectedByGravity
+        b.allowsRotation = allowsRotation
+        b.linearDamping = linearDamping
+        b.angularDamping = angularDamping
+        b.friction = friction
+        b.restitution = restitution
+        b.density = density
+        b.fieldBitMask = fieldBitMask
+        b.isSensor = isSensor
+        b.usesPreciseCollisionDetection = usesPreciseCollisionDetection
+        if massExplicit { b.mass = mass }
+        // Carry the pending (not-yet-flushed) velocity so the copy launches with
+        // the same impulse the game set on the original before copying it.
+        b._velocity = velocityDirty ? _velocity : velocity
+        b.velocityDirty = true
+        b.angularVelocity = angularVelocity
+        b.angularDirty = angularVelocity != 0
+        return b
+    }
 
     // Returns the set of bodies currently in contact with this one. The Box2D
     // shim doesn't expose a continuous contact list yet, so we filter the
@@ -280,6 +334,24 @@ public final class SKPhysicsBody {
             if m > 0 { B2.setMass(bodyId, Float(m), Float(boundingRadius())) }
         }
         SKPhysicsWorld.registry[bodyId] = self
+    }
+
+    // Re-push Apple's collision filter to the live Box2D body when the game
+    // mutates categoryBitMask / collisionBitMask / isDynamic / isSensor AFTER
+    // the body was created. SpriteKit honors these changes immediately; the
+    // tractor beam relies on it — tractorBeamedThisItem() sets the grabbed
+    // prize's category/collision masks to 0 so it stops colliding while it's
+    // sucked up (matching SpriteKit, where the SKAction-moved item carries no
+    // riders). Without this re-sync the masks stay frozen at creation, the prize
+    // remains solid in Box2D, and teleporting it upward via setTransform shoves
+    // (de-penetrates) the bad dino resting on it so the dino rides the grass up.
+    // The computation mirrors createInWorld() EXACTLY so the dino still rests on
+    // its untouched original platform — only the tractored body's filter changes.
+    func syncFilter() {
+        let dyn = isDynamic
+        let mask = dyn ? collisionBitMask : UInt32(0xFFFFFFFF)
+        let sensor = isSensor || (collisionBitMask == 0 && dyn)
+        B2.setFilter(bodyId, categoryBitMask, mask, sensor)
     }
 
     func appleAreaPts2() -> Double {

@@ -54,6 +54,13 @@ open class SKNode {
         n.position = position; n.zPosition = zPosition; n.zRotation = zRotation
         n.xScale = xScale; n.yScale = yScale; n.alpha = alpha
         n.name = name; n.isHidden = isHidden; n.speed = speed
+        // Apple's SKPhysicsBody conforms to NSCopying and node.copy() clones it,
+        // so a duplicated node is independently simulated. UFO Emoji fires by
+        // building a body-carrying template (👁/💣) and adding only its .copy()
+        // (laserDupe/DaBomb) to the scene; without cloning the body the copy has
+        // no physicsBody, never gets a Box2D body, never moves, and the
+        // projectile is invisible (frozen) — the laser/bomb bug.
+        if let b = physicsBody { n.physicsBody = b._clone() }
         for c in children { n.addChild(c.copy()) }
         return n
     }
