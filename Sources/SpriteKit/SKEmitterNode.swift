@@ -92,6 +92,22 @@ public final class SKEmitterNode: SKNode {
     private var emitAccum: CGFloat = 0
     private var emittedSoFar = 0
 
+    // Cull radius so an emitter whose entire particle spread is off-screen is
+    // skipped (default 0 = never cull). The white-hole/level-up effects are
+    // scattered across a long level; without this EVERY one drew all its
+    // particles every frame (one Canvas2D drawImage each) and FPS collapsed.
+    // Bound by how far particles travel from the origin: speed*lifetime + the
+    // position jitter + the largest the textured quad grows to.
+    override var _cullExtent: CGFloat {
+        let travel = abs(particleSpeed) * particleLifetime
+        let spread = max(particlePositionRange.dx, particlePositionRange.dy) / 2
+        let maxScale = max(particleScale,
+                           particleScale + particleScaleRange / 2,
+                           particleScale + particleScaleSpeed * particleLifetime)
+        let quad = max(particleSize.width, particleSize.height) * max(1, maxScale)
+        return travel + spread + quad + 32
+    }
+
     public override init() { super.init() }
 
     // Programmatic load from a particle file. The .sks was converted to JSON by
