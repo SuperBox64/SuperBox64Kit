@@ -164,7 +164,11 @@ open class SKNode {
     }
 
     public var scene: SKScene? {
-        return (self as? SKScene) ?? parent?.scene
+        // Fall back to the presented scene when the parent chain is incomplete
+        // (spawned level tiles render via children but their upward parent link
+        // doesn't reach the scene, which made tile.scene nil and broke the game's
+        // worldVersusLaser convert → the laser was never removed on grass/dirt).
+        return (self as? SKScene) ?? parent?.scene ?? SKScene._presented
     }
 
     public var isUserInteractionEnabled = false

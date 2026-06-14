@@ -65,6 +65,7 @@ public class SKView: UIView {
             old.view = nil
         }
         self.scene = scene
+        SKScene._presented = scene   // fallback for SKNode.scene when a parent chain is incomplete
         renderAccum = 1e9   // draw the incoming scene on the very next tick
         if let s = scene {
             s.view = self

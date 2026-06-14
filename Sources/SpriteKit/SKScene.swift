@@ -3,6 +3,11 @@ import KitABI
 public enum SKSceneScaleMode { case fill, aspectFill, aspectFit, resizeFill }
 
 open class SKScene: SKNode {
+    // The currently-presented scene. SKNode.scene falls back to this when a
+    // node's parent chain doesn't reach a scene — which happens for the spawned
+    // level tiles, breaking `tile.scene?.convert(...)` in the game's
+    // worldVersusLaser so the laser was never removed on grass/dirt hits.
+    nonisolated(unsafe) public static weak var _presented: SKScene?
     public var size: CGSize
     public var backgroundColor: SKColor = SKColor(white: 0.06, alpha: 1)
     public var anchorPoint = CGPoint.zero
