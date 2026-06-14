@@ -303,7 +303,10 @@ public final class CIFilter {
 }
 
 public class SKEffectNode: SKNode {
-    public var shouldEnableEffects: Bool = false
+    // Apple's default is TRUE — setting a filter is enough to get the effect
+    // (UFO Emoji's tractor-beam glow relies on this: addGlow() sets only the
+    // filter). The kit defaulted to false, so the beam rendered hard-edged.
+    public var shouldEnableEffects: Bool = true
     public var shouldRasterize: Bool = false
     public var shouldCenterFilter: Bool = false
     public var blendMode: SKBlendMode = .alpha
@@ -314,6 +317,22 @@ public class SKEffectNode: SKNode {
     // directly to get a real visual effect on web.
     public var filterString: String?
     public override init() { super.init() }
+
+    // CSS filter to apply to the children's rendered pixels. Honors an explicit
+    // filterString first, else maps a blur-family CIFilter to a CSS blur so the
+    // CHILDREN are softened in their own colour (the tractor beam glow uses
+    // CIMotionBlur). CIGaussianBlur keeps its dedicated black-shadow path above,
+    // so it's excluded here. CI radii are larger than a CSS blur sigma, so scale
+    // down (~0.25x) to read like Apple instead of washing the sprite out.
+    var effectiveFilterString: String? {
+        if let fs = filterString { return fs }
+        guard let cf = filter as? CIFilter, cf.inputRadius > 0 else { return nil }
+        if cf.name.hasSuffix("MotionBlur") || cf.name.hasSuffix("BoxBlur") {
+            let px = max(1, Int((cf.inputRadius * 0.25).rounded()))
+            return "blur(\(px)px)"
+        }
+        return nil
+    }
 
     override func draw(alpha: CGFloat) {
         // Children are drawn by renderTree via the SKNode base path; this hook
@@ -373,8 +392,8 @@ public class SKEffectNode: SKNode {
         // takes effect. Setting ctx.filter inline on the live target loses
         // the state across the children's own gfx_save/restore boundaries,
         // which is why my prior attempt rendered the shadow with hard edges.
-        let usingFilter = shouldEnableEffects && filterString != nil
-        if usingFilter, let f = filterString, !children.isEmpty {
+        let usingFilter = shouldEnableEffects && effectiveFilterString != nil
+        if usingFilter, let f = effectiveFilterString, !children.isEmpty {
             // Bound the offscreen to the union of children's accumulated
             // frames, then pad it so the blur halo doesn't get clipped at
             // the edge. Pad = 16px is enough for a 6px Gaussian blur (the
@@ -388,7 +407,12 @@ public class SKEffectNode: SKNode {
                 let cf = c.frame
                 bounds = (bounds == .zero) ? cf : bounds.union(cf)
             }
-            let pad: CGFloat = 16
+            // Pad the offscreen so the blur halo isn't clipped at the edge.
+            // Scale with the CIFilter radius (the beam's CIMotionBlur is large).
+            let pad: CGFloat = {
+                if let cf = filter as? CIFilter, cf.inputRadius > 0 { return max(16, cf.inputRadius * 0.5) }
+                return 16
+            }()
             let w = Int(bounds.width  + pad * 2)
             let h = Int(bounds.height + pad * 2)
             if w > 0 && h > 0 {
