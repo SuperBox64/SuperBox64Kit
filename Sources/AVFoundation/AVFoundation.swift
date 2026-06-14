@@ -22,7 +22,14 @@ nonisolated(unsafe) var _avMasterVolume: Float = 1.0
 // the single main thread, so the work runs inline (a deferred main-queue hop
 // would never drain here). The macOS build supplies its own version that hops to
 // the main queue, since its AVFoundation completions fire off-thread.
-@MainActor public func runOnMain(_ work: @escaping @MainActor () -> Void) { work() }
+// nonisolated so it can be CALLED from an audio completion closure (which is
+// nonisolated). On the single-threaded wasm main loop we are provably on the main
+// actor, so assert isolation to run the @MainActor work inline — the documented
+// behavior. (A game that opts into .defaultIsolation(MainActor) and a v5/v6 game
+// alike can both invoke this from their nonisolated completion handlers.)
+public func runOnMain(_ work: @escaping @MainActor () -> Void) {
+    MainActor.assumeIsolated { work() }
+}
 
 // Hands the game's voice-name preference lists to the runtime, which owns voice
 // selection on the web (priority order, robotic-excluded, female-last). The

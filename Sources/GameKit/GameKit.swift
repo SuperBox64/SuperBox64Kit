@@ -11,7 +11,10 @@ import KitABI
 // =============================================================================
 
 public final class GKLocalPlayer {
-    public static let local = GKLocalPlayer()
+    // Single-threaded wasm runtime: this Game Center singleton is only touched on
+    // the main loop, so the shared-mutable-state concern doesn't apply. (BossMan
+    // imports GameKit; UFO Emoji does not, so this only surfaces in BossMan.)
+    nonisolated(unsafe) public static let local = GKLocalPlayer()
     public var isAuthenticated = false
     public var displayName = "Player"
     public var alias = "Player"
@@ -102,7 +105,7 @@ public final class GKAchievement {
 
 // =============================================================================
 public final class GKAccessPoint {
-    public static let shared = GKAccessPoint()
+    nonisolated(unsafe) public static let shared = GKAccessPoint()
     public var isActive = false
     public var location = 0
     public var showHighlights = false
