@@ -78,15 +78,27 @@ open class SKScene: SKNode {
     // this equals renderTree minus that one subtree.
     func renderWorld(skipping skip: SKNode?, parentAlpha: CGFloat) {
         let eff = parentAlpha * alpha
-        // SpriteKit renders by GLOBAL accumulated zPosition — a node's render order
-        // is the SUM of its own and all ancestor zPositions, NOT a per-parent sort.
-        // That's why a laser at z=-100 (a SCENE child) draws ABOVE the parallax at
-        // z=-243 (a WORLD child) yet BELOW the tiles at z=10, while the hero's face
-        // child (z=24) still sits on the hero (z=150 -> 174). The old per-parent
-        // sort drew the whole world (with its full-screen parallax) on top of the
-        // laser, hiding it. Flatten the tree (skip the camera subtree — that's the
-        // HUD pass), sort by accumulated z, draw each node's OWN content at its
-        // absolute transform.
+        // Per-parent mode (opt-in via SKView.zOrderMode = .parentRelative, e.g.
+        // BossMan): the scene's children sorted by zPosition, each subtree
+        // rendered via renderTree so siblings follow their parent and a child's z
+        // orders it only among its siblings. Default stays global absolute-z below.
+        if SKView.zOrderMode == .parentRelative {
+            var vis: [SKNode] = []
+            vis.reserveCapacity(children.count)
+            for c in children where c !== skip && !c.isHidden && c.alpha > 0 { vis.append(c) }
+            if vis.count > 1 { vis.sort { $0.zPosition < $1.zPosition } }
+            for c in vis { c.renderTree(parentAlpha: eff) }
+            return
+        }
+        // Apple renders by GLOBAL absolute zPosition (SKNode.zPosition docs:
+        // "the height of each node (in absolute coordinates) is calculated and
+        // then all nodes in the tree are rendered from smallest z-position value
+        // to largest"; ties: parent before children, then sibling array order).
+        // That's why the UFO laser (z=-100, a SCENE child) layers ABOVE the
+        // world's parallax (z=-243) yet BELOW the tiles (z=10). Flatten the tree
+        // (skipping the camera subtree — the screen-fixed HUD pass), sort by
+        // accumulated z with a stable tree-order tie-break, draw each node's OWN
+        // content at its absolute transform.
         var flat: [(node: SKNode, z: CGFloat, a: CGFloat, order: Int)] = []
         var counter = 0
         func collect(_ n: SKNode, _ accZ: CGFloat, _ accA: CGFloat, _ wx: CGFloat, _ wy: CGFloat) {
@@ -109,9 +121,6 @@ open class SKScene: SKNode {
         flat.sort { $0.z != $1.z ? $0.z < $1.z : $0.order < $1.order }
         for item in flat {
             gfx_save()
-            // Re-apply the transform chain from this scene's child down to the node
-            // (matches SKNode.renderTree's translate->rotate->scale per level) so the
-            // node draws at its true absolute position/rotation/scale.
             var chain: [SKNode] = []
             var cur: SKNode? = item.node
             while let n = cur, n !== self { chain.append(n); cur = n.parent }

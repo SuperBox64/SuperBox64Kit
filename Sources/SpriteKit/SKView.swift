@@ -22,10 +22,19 @@ func _kitDrainAudioCompletions() {
     _kitAudioCompletions = pending
 }
 
+// Render z-order mode (kit-wide). Apple SpriteKit renders by GLOBAL absolute
+// zPosition (the default — see SKNode.zPosition docs; the UFO Emoji laser relies
+// on it). A port whose scene-graph z-values were authored for PER-PARENT subtree
+// ordering (a child's z orders it only among its siblings; each subtree stays
+// grouped under its parent) sets SKView.zOrderMode = .parentRelative once before
+// presenting. No override -> .absoluteZ, so every other game is unchanged.
+public enum SKZOrderMode: Sendable { case absoluteZ, parentRelative }
+
 // Drives a presented SKScene from the kit's frame(dtMs): advances actions,
 // calls scene.update, steps physics, renders the tree (flipping y-up to the
 // Canvas y-down surface).
 public class SKView: UIView {
+    nonisolated(unsafe) public static var zOrderMode: SKZOrderMode = .absoluteZ
     public private(set) var scene: SKScene?
     private var elapsed: TimeInterval = 0
     // Wall-clock accrued toward the next render. Seeded large so the first tick
