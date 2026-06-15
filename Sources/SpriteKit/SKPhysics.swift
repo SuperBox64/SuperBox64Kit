@@ -591,7 +591,9 @@ public final class SKPhysicsWorld {
     // can see where the physics shapes actually sit relative to the
     // sprites. OFF by default to match Apple SpriteKit (SKView.showsPhysics
     // is false by default); opt in via scene.physicsWorld.showsPhysics = true.
-    public var showsPhysics: Bool = true   // TEMP: on for debugging the unicorn/platform collision — strokes every Box2D body outline
+    // Secondary opt-in (Apple's primary is SKView.showsPhysics, honored in
+    // SKView.render). OFF by default to match Apple SpriteKit.
+    public var showsPhysics: Bool = false
 
     // Walks every body in the registry and strokes its shape on the
     // active draw target. Called from SKView.render after the scene
@@ -947,7 +949,11 @@ public final class SKPhysicsWorld {
             guard let A = SKPhysicsWorld.registry[c.bodyA], let B = SKPhysicsWorld.registry[c.bodyB] else { continue }
             let hit = (A.categoryBitMask & B.contactTestBitMask) != 0
                    || (B.categoryBitMask & A.contactTestBitMask) != 0
-            if hit { contactDelegate?.didBegin(SKPhysicsContact(A, B)) }
+            if hit {
+                let contact = SKPhysicsContact(A, B)
+                contact.contactPoint = CGPoint(x: CGFloat(c.pointX), y: CGFloat(c.pointY))
+                contactDelegate?.didBegin(contact)
+            }
         }
     }
 }

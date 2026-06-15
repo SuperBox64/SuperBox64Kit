@@ -94,6 +94,12 @@ WABI void  gfx_clear_shadow(void);
 /* 3=lighter, 4=multiply, 5=screen, 6=overlay. */
 WABI void  gfx_set_composite(int mode);
 
+/* SKView debug HUD overlay flags. bit0 = SKView.showsFPS (FPS + frame ms),
+ * bit1 = SKView.showsDrawCount (per-frame image/text draw counts). 0 = hidden.
+ * The runtime composes the HUD line from the enabled bits and draws nothing
+ * when both are off (matches Apple's default of showsFPS/showsDrawCount = false). */
+WABI void  dbg_set_overlays(int flags);
+
 /* DOM video element (SKVideoNode). vid_load registers the source by name */
 /* (resolved through the asset table), vid_play / vid_pause control playback, */
 /* vid_set_rect positions/sizes the element in logical pixels (y-down). */

@@ -33,12 +33,16 @@ public class SKView: UIView {
     // screen idle at 1 fps (preferredFramesPerSecond) without skipping startup.
     private var renderAccum: Double = 1e9
 
-    // No-op rendering knobs (so SpriteKit games drop in unchanged). The kit always
-    // renders top-down via Canvas2D and doesn't expose these debug overlays.
-    public var showsFPS = false
+    // SKView debug/config knobs (Apple-faithful: the GAME sets these; the kit
+    // honors the ones it can actually render). showsFPS + showsDrawCount drive
+    // the runtime's HUD overlay (via dbg_set_overlays); showsPhysics strokes the
+    // Box2D bodies in SKView.render. showsNodeCount/showsQuadCount/showsFields are
+    // accepted so source drops in unchanged but have no kit data source yet, so
+    // they're settable no-ops until the kit tracks those counts.
+    public var showsFPS = false       { didSet { pushOverlayFlags() } }
     public var showsNodeCount = false
     public var showsPhysics = false
-    public var showsDrawCount = false
+    public var showsDrawCount = false { didSet { pushOverlayFlags() } }
     public var showsFields = false
     public var showsQuadCount = false
     public var ignoresSiblingOrder = false
@@ -55,6 +59,17 @@ public class SKView: UIView {
 
     public override init() { super.init() }
 
+    // Push the runtime HUD overlay flags whenever showsFPS/showsDrawCount change
+    // (and once at presentScene). bit0 = showsFPS (FPS + frame ms), bit1 =
+    // showsDrawCount (per-frame img/txt draw counts). The runtime composes the
+    // HUD from the enabled bits and draws nothing when both are off.
+    func pushOverlayFlags() {
+        var f: Int32 = 0
+        if showsFPS { f |= 1 }
+        if showsDrawCount { f |= 2 }
+        dbg_set_overlays(f)
+    }
+
     public func presentScene(_ scene: SKScene?) {
         // Tear down the outgoing scene first (Apple calls willMove(from:) on
         // it). Without this a scene's teardown never runs — e.g. a per-scene
@@ -67,6 +82,7 @@ public class SKView: UIView {
         self.scene = scene
         SKScene._presented = scene   // fallback for SKNode.scene when a parent chain is incomplete
         renderAccum = 1e9   // draw the incoming scene on the very next tick
+        pushOverlayFlags()  // sync the HUD overlay (showsFPS/showsDrawCount) to the runtime
         if let s = scene {
             s.view = self
             if !s._sceneDidLoadFired {
@@ -159,10 +175,26 @@ public class SKView: UIView {
 
     @discardableResult
     private func pollEvents(_ s: SKScene) -> Bool {
+        // Drain the whole frame first so we can tell a TOUCH device (which the
+        // runtime reports as BOTH a synthetic MouseButtonPressed AND a TouchBegan
+        // for one finger-down: runtime.js touchstart pushes type 9 then type 19)
+        // from a DESKTOP mouse (MouseButtonPressed only). Without this we
+        // double-dispatch the iOS UITouch path on touch: case 9 and case 19 BOTH
+        // call dispatchTouches(.began), so GameScene.touchesBegan -> laserbeak
+        // fires twice per tap on mobile while once on desktop. Apple delivers
+        // exactly one UITouch began per finger, so when ANY touch event is present
+        // this frame the touch cases are authoritative and the mouse cases only
+        // drive the AppKit mouseDown/Up/Moved hooks (no second dispatchTouches).
+        // On desktop (no touch events) the mouse cases still synthesize the
+        // UITouch path so the game's touchesBegan-only input works. Pre-scanning
+        // is required because the synthetic mouse event (type 9) is enqueued
+        // BEFORE the touch event (type 19) within one touchstart.
+        var batch: [(Int32, Int32, Int32, Int32, Int32)] = []
         var type: Int32 = 0, a: Int32 = 0, b: Int32 = 0, c: Int32 = 0, d: Int32 = 0
-        var handled = false
-        while evt_poll(&type, &a, &b, &c, &d) != 0 {
-            handled = true
+        while evt_poll(&type, &a, &b, &c, &d) != 0 { batch.append((type, a, b, c, d)) }
+        if batch.isEmpty { return false }
+        let hasTouch = batch.contains { $0.0 == 19 || $0.0 == 20 || $0.0 == 21 }
+        for (type, a, b, c, d) in batch {
             switch type {
             case 5:  s.keyDown(Int(a))
             case 6:  s.keyUp(Int(a))
@@ -170,17 +202,17 @@ public class SKView: UIView {
                 if a == 1 { s.rightMouseDown(at: scenePoint(b, c, s)) }
                 else {
                     s.mouseDown(at: scenePoint(b, c, s), clickCount: max(1, Int(d)))
-                    dispatchTouches(.began, at: worldPoint(b, c, s), to: s)   // iOS-style touch path
+                    if !hasTouch { dispatchTouches(.began, at: worldPoint(b, c, s), to: s) }   // iOS-style touch path (desktop only)
                 }
             case 10:
                 if a == 1 { s.rightMouseUp(at: scenePoint(b, c, s)) }
                 else {
                     s.mouseUp(at: scenePoint(b, c, s))
-                    dispatchTouches(.ended, at: worldPoint(b, c, s), to: s)
+                    if !hasTouch { dispatchTouches(.ended, at: worldPoint(b, c, s), to: s) }
                 }
             case 11:
                 s.mouseMoved(to: scenePoint(a, b, s))
-                dispatchTouches(.moved, at: worldPoint(a, b, s), to: s)
+                if !hasTouch { dispatchTouches(.moved, at: worldPoint(a, b, s), to: s) }
             case 19:
                 s.touchBegan(finger: Int(a), at: scenePoint(b, c, s))
                 dispatchTouches(.began, at: worldPoint(b, c, s), to: s)
@@ -193,7 +225,7 @@ public class SKView: UIView {
             default: break
             }
         }
-        return handled
+        return true
     }
 
     // Bridge host pointer/touch events to the iOS UIResponder touch API. Many
@@ -320,7 +352,7 @@ public class SKView: UIView {
         // Apple-style showsPhysics overlay: strokes every Box2D body's
         // outline on top of the scene. Lives inside the same y-up
         // transform so positions read straight from Box2D coordinates.
-        if s.physicsWorld.showsPhysics { s.physicsWorld.renderDebug() }
+        if showsPhysics || s.physicsWorld.showsPhysics { s.physicsWorld.renderDebug() }
         gfx_restore()
         // Camera-children pass: screen-fixed overlays (HUD, PAUSED, joystick,
         // fire button, game-over). Same y-flip + scene-centring, but no zoom,

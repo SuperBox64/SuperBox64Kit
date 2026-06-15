@@ -66,6 +66,13 @@ enum B2 {
         let catB: UInt32
         let bodyA: Int32
         let bodyB: Int32
+        // Scene-space contact point. All begin-touch events arrive via the sensor
+        // stream (shapes use enableSensorEvents; see shapeDef), which carries no
+        // b2Manifold, so this is the midpoint of the two body centers — Apple's
+        // contact.contactPoint for an overlap. Box2D coords are absolute scene
+        // points (absolutePosition() pushed in; 150 length-units/m == 1:1 points).
+        let pointX: Float
+        let pointY: Float
     }
 
     static func reset(_ gx: Float, _ gy: Float) {
@@ -533,10 +540,13 @@ enum B2 {
             let key = (hi << 32) | lo
             if seen.contains(key) { return }
             seen.insert(key)
+            let pa = b2Body_GetPosition(bodyA)
+            let pb = b2Body_GetPosition(bodyB)
             out.append(BeginContact(
                 catA: UInt32(truncatingIfNeeded: b2Shape_GetFilter(shapeA).categoryBits),
                 catB: UInt32(truncatingIfNeeded: b2Shape_GetFilter(shapeB).categoryBits),
-                bodyA: idA, bodyB: idB))
+                bodyA: idA, bodyB: idB,
+                pointX: (pa.x + pb.x) * 0.5, pointY: (pa.y + pb.y) * 0.5))
         }
 
         let ce = b2World_GetContactEvents(w)
