@@ -428,20 +428,25 @@ open class SKNode {
         // stall per tile (which would slow a self-chaining mover to boss speed).
         // `stepped` bounds each action to one step/frame; finished actions are
         // removed BY IDENTITY since the array can mutate during a step.
-        var stepped = Set<ObjectIdentifier>()
-        var i = 0
-        while i < runningActions.count {
-            let ra = runningActions[i]
-            guard stepped.insert(ObjectIdentifier(ra)).inserted else {
-                i += 1
-                continue
-            }
-            if ra.step(scaled, node: self) {
-                if let idx = runningActions.firstIndex(where: { $0 === ra }) {
-                    runningActions.remove(at: idx)
+        // Skip the per-node Set allocation when there are no actions — most nodes
+        // (static tiles, the parallax sprite layers) have zero, so this drops
+        // hundreds of heap-backed Set allocs per frame (GC pressure -> hiccups).
+        if !runningActions.isEmpty {
+            var stepped = Set<ObjectIdentifier>()
+            var i = 0
+            while i < runningActions.count {
+                let ra = runningActions[i]
+                guard stepped.insert(ObjectIdentifier(ra)).inserted else {
+                    i += 1
+                    continue
                 }
-            } else {
-                i += 1
+                if ra.step(scaled, node: self) {
+                    if let idx = runningActions.firstIndex(where: { $0 === ra }) {
+                        runningActions.remove(at: idx)
+                    }
+                } else {
+                    i += 1
+                }
             }
         }
         // tickSelf (the emitter particle sim) gets the UN-self-scaled dt: Apple's
