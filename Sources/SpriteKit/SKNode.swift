@@ -444,7 +444,13 @@ open class SKNode {
                 i += 1
             }
         }
-        tickSelf(TimeInterval(scaled))
+        // tickSelf (the emitter particle sim) gets the UN-self-scaled dt: Apple's
+        // node.speed scales SKActions and propagates to descendants, but it does
+        // NOT drive an SKEmitterNode's particle simulation — the renderer clocks
+        // that itself. UFO sets blackhole.speed=5 / minigamehole.speed=2 / smoke.speed=5,
+        // which are no-ops on real SpriteKit; honoring them here spun the level-end
+        // white hole 2-5x too fast. Pass `dt` (pre-self-multiply) so emitters run real-time.
+        tickSelf(TimeInterval(dt))
         if let cs = constraints {                    // post-action constraint pass
             for c in cs { c.apply(to: self) }
         }
