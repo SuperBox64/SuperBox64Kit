@@ -317,11 +317,6 @@ open class SKNode {
     func deepestInteractiveNode(at world: CGPoint) -> SKNode? {
         let p = (self is SKScene) ? world : convertFromWorld(world)
         let hits = nodes(at: p)
-        // DEBUG: dump what's under the pointer so we can see why the joystick/fire
-        // are or aren't captured.
-        var dbg = ""
-        for h in hits.prefix(8) { dbg += (h.name ?? "?") + "(z\(Int(h.zPosition)),i\(h.isUserInteractionEnabled ? 1 : 0)) " }
-        _dbgLog("hits@\(Int(p.x)),\(Int(p.y)): \(dbg)")
         // Walk UP from EACH hit (top-z first) to the first interaction-enabled
         // ancestor. The old code only walked up from hits.first, so if the
         // top-z node under the pointer was non-interactive (a tile/overlay) it

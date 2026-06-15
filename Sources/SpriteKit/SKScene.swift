@@ -7,7 +7,13 @@ open class SKScene: SKNode {
     // node's parent chain doesn't reach a scene — which happens for the spawned
     // level tiles, breaking `tile.scene?.convert(...)` in the game's
     // worldVersusLaser so the laser was never removed on grass/dirt hits.
+    #if hasFeature(Embedded)
+    // Embedded Swift forbids `weak`; a strong ref is fine — presentScene replaces
+    // it and the presented scene lives for the session.
+    nonisolated(unsafe) public static var _presented: SKScene?
+    #else
     nonisolated(unsafe) public static weak var _presented: SKScene?
+    #endif
     public var size: CGSize
     public var backgroundColor: SKColor = SKColor(white: 0.06, alpha: 1)
     public var anchorPoint = CGPoint.zero
@@ -78,18 +84,6 @@ open class SKScene: SKNode {
     // this equals renderTree minus that one subtree.
     func renderWorld(skipping skip: SKNode?, parentAlpha: CGFloat) {
         let eff = parentAlpha * alpha
-        // Per-parent mode (opt-in via SKView.zOrderMode = .parentRelative, e.g.
-        // BossMan): the scene's children sorted by zPosition, each subtree
-        // rendered via renderTree so siblings follow their parent and a child's z
-        // orders it only among its siblings. Default stays global absolute-z below.
-        if SKView.zOrderMode == .parentRelative {
-            var vis: [SKNode] = []
-            vis.reserveCapacity(children.count)
-            for c in children where c !== skip && !c.isHidden && c.alpha > 0 { vis.append(c) }
-            if vis.count > 1 { vis.sort { $0.zPosition < $1.zPosition } }
-            for c in vis { c.renderTree(parentAlpha: eff) }
-            return
-        }
         // Apple renders by GLOBAL absolute zPosition (SKNode.zPosition docs:
         // "the height of each node (in absolute coordinates) is calculated and
         // then all nodes in the tree are rendered from smallest z-position value

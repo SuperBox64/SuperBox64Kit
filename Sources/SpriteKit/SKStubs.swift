@@ -291,8 +291,13 @@ public final class CIFilter {
     public var inputRadius: CGFloat = 0
     #if hasFeature(Embedded)
     // Embedded Swift has no `Any`, so the [String: Any] parameter form can't
-    // exist here; expose the plain initializer (set inputRadius directly).
-    public init?(name: String) { self.name = name }
+    // exist here. Accept a typed [String: Double] so the game's unchanged
+    // CIFilter(name:, parameters: ["inputRadius": 12.5]) call still resolves
+    // (the blur radius is the only parameter the kit honors).
+    public init?(name: String, parameters: [String: Double]? = nil) {
+        self.name = name
+        if let r = parameters?["inputRadius"] { inputRadius = CGFloat(r) }
+    }
     #else
     public init?(name: String, parameters: [String: Any]? = nil) {
         self.name = name

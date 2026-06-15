@@ -27,9 +27,15 @@ nonisolated(unsafe) var _avMasterVolume: Float = 1.0
 // actor, so assert isolation to run the @MainActor work inline — the documented
 // behavior. (A game that opts into .defaultIsolation(MainActor) and a v5/v6 game
 // alike can both invoke this from their nonisolated completion handlers.)
+#if hasFeature(Embedded)
+// Embedded Swift has no MainActor type; single-threaded wasm runs the work inline
+// (the @MainActor on params/closures is sed-stripped by the embedded build).
+public func runOnMain(_ work: @escaping () -> Void) { work() }
+#else
 public func runOnMain(_ work: @escaping @MainActor () -> Void) {
     MainActor.assumeIsolated { work() }
 }
+#endif
 
 // Hands the game's voice-name preference lists to the runtime, which owns voice
 // selection on the web (priority order, robotic-excluded, female-last). The
