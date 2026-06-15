@@ -255,7 +255,14 @@ open class SKNode {
             }
             .map { $0.element }
     }
-    private func collectNodes(at p: CGPoint, into hits: inout [SKNode]) {
+    // @usableFromInline (not private): nodes(at:) is public, so under Embedded
+    // Swift's whole-module serialization its body — including this recursive
+    // helper — is emitted into the consumer module. A private/internal callee
+    // there has the wrong linkage ("function has wrong linkage to be called
+    // from collectNodes"), exactly like teardownPhysics above. Promoting the
+    // linkage of both this and _pointFromParent fixes the Embedded link.
+    @usableFromInline
+    func collectNodes(at p: CGPoint, into hits: inout [SKNode]) {
         for c in children {
             if c.frame.contains(p) { hits.append(c) }
             c.collectNodes(at: c._pointFromParent(p), into: &hits)
@@ -267,6 +274,7 @@ open class SKNode {
     // scale). nodes(at:)/hit-testing recurse with this so a rotated/scaled node
     // (the π/4 fire HUD) hit-tests where it actually drew, not where an
     // axis-aligned box would be.
+    @usableFromInline
     func _pointFromParent(_ p: CGPoint) -> CGPoint {
         var q = CGPoint(x: p.x - position.x, y: p.y - position.y)
         if zRotation != 0 {
