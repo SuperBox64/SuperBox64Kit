@@ -287,6 +287,7 @@ open class SKNode {
     }
 
     // True if `ancestor` is somewhere above this node in the tree.
+    @usableFromInline
     func isUnder(_ ancestor: SKNode) -> Bool {
         var n: SKNode? = parent
         while let cur = n { if cur === ancestor { return true }; n = cur.parent }
@@ -300,6 +301,7 @@ open class SKNode {
     // of every node from the camera's direct child down to self. Used by
     // UITouch.location(in:) so `touch.location(in: joystick)` returns the
     // joystick-local offset the stick math expects.
+    @usableFromInline
     func convertFromWorld(_ world: CGPoint) -> CGPoint {
         if self is SKScene { return world }
         // chain: self up to (not including) the scene, then reversed to top-down.

@@ -87,6 +87,13 @@ public struct DispatchTime {
 
 public final class DispatchQueue {
     public nonisolated(unsafe) static let main = DispatchQueue()
+    // Embedded build calls this via `.shared`, never `.main`: the literal member
+    // name `DispatchQueue.main` makes the Swift compiler infer @MainActor on the
+    // submitted closure (its built-in GCD special-case). Under Embedded Swift
+    // there is no MainActor type, so that inference asserts in SILGen
+    // ("creating global actor isolation without an actor type"). Same queue,
+    // different spelling — the embedded source transform rewrites .main -> .shared.
+    public nonisolated(unsafe) static let shared = main
 
     @usableFromInline nonisolated(unsafe) static var pending: [(remaining: Double, work: () -> Void)] = []
 
@@ -154,7 +161,17 @@ public final class NSMutableDictionary {
     #if hasFeature(Embedded)
     // Embedded Swift has no `Any`; back the dictionary with a small typed union
     // covering what the scene loader writes (bool/double/string tile userData).
-    public enum Value { case bool(Bool); case uint32(UInt32); case double(Double); case string(String) }
+    public enum Value {
+        case bool(Bool); case uint32(UInt32); case double(Double); case string(String)
+        // Typed accessors. Embedded has no `Any`, so the game cannot read tile
+        // userData with `dict[k] as? Bool` / `as! String` (those compile but the
+        // value is this enum, not Bool/String, so they always fail). Read through
+        // these instead: `dict[k]?.boolValue`, `dict[k]?.stringValue`, etc.
+        public var boolValue: Bool?     { if case let .bool(v)   = self { return v }; return nil }
+        public var uint32Value: UInt32? { if case let .uint32(v) = self { return v }; return nil }
+        public var doubleValue: Double? { if case let .double(v) = self { return v }; return nil }
+        public var stringValue: String? { if case let .string(v) = self { return v }; return nil }
+    }
     private var storage: [String: Value] = [:]
     public init() {}
     public var count: Int { storage.count }
