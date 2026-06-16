@@ -1486,9 +1486,31 @@ final class Kit {
             guard audioDevice != 0 else { return -1 }
             _ = SDL_ResumeAudioDevice(audioDevice)
         }
+        // SFX voice budget: rapid fire (lasers/bombs) must not pile up into dozens of
+        // streams whose summed amplitude clips and grinds against the music. Cap the
+        // concurrent one-shots and steal the oldest. Loops (music) are never counted
+        // or stolen — they keep their own channel and ride above the SFX.
+        if !loop {
+            let maxSfx = 16
+            var sfxCount = 0
+            for l in voiceLoops where l == 0 { sfxCount += 1 }
+            while sfxCount >= maxSfx, let oldest = voiceLoops.firstIndex(of: 0) {
+                SDL_UnbindAudioStream(voiceStreams[oldest])
+                SDL_DestroyAudioStream(voiceStreams[oldest])
+                voiceStreams.remove(at: oldest)
+                voiceLoops.remove(at: oldest)
+                voiceIds.remove(at: oldest)
+                voicePans.remove(at: oldest)
+                voiceGains.remove(at: oldest)
+                sfxCount -= 1
+            }
+        }
         var spec = soundSpecs[i]
         guard let stream = SDL_CreateAudioStream(&spec, nil) else { return -1 }
-        let gain = max(0, min(1, volume / 100))
+        // Headroom so the summed mix doesn't clip: SFX get ~6 dB so several overlapping
+        // effects fit under full-scale; music keeps a touch more level and rides above.
+        let headroom: Float = loop ? 0.85 : 0.5
+        let gain = max(0, min(1, volume / 100)) * headroom
         _ = SDL_SetAudioStreamGain(stream, gain * duck)
         _ = SDL_BindAudioStream(audioDevice, stream)
         _ = SDL_PutAudioStreamData(stream, buf, Int32(soundLens[i]))
