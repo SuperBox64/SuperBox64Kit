@@ -86,6 +86,9 @@ final class Kit {
     var profImgNs: UInt64 = 0
     var profTxtNs: UInt64 = 0
     var profPresentNs: UInt64 = 0
+    var profCartNs: UInt64 = 0   // wasm frame() execution incl. its gfx callbacks (WAMR)
+    var profBlitNs: UInt64 = 0   // offscreen screenTex -> window blit (queue only)
+    var profVsyncNs: UInt64 = 0  // SDL_RenderPresent: GPU flush + vblank wait (mostly idle)
     var events: [(Int32, Int32, Int32, Int32, Int32)] = []
     var evtMutex: OpaquePointer? = nil
 
@@ -286,6 +289,11 @@ final class Kit {
         var tex: UnsafeMutablePointer<SDL_Texture>?
         var w: Int32
         var h: Int32
+        // Resolution independence (mirrors runtime.js svgRaster): for vector art we keep
+        // the SVG source and re-rasterize at the sprite's live on-screen device footprint,
+        // quantized to power-of-two buckets. nil svgBytes = raster image (no re-raster).
+        var svgBytes: [UInt8]? = nil
+        var rasterMult: Int32 = 1   // power-of-two intrinsic multiple the current tex was baked at
     }
     var images: [ImgRec?] = [nil]
     var freeImageSlots: [Int] = []
@@ -799,6 +807,36 @@ final class Kit {
         return Int32(images.count - 1)
     }
 
+    // Resolution-independent vector re-raster: grow an SVG's texture to the sprite's live
+    // on-screen device footprint, quantized to power-of-two buckets (grow-only, so a sprite
+    // re-rasters at most ~log2(maxMult) times over its life and never thrashes on a boundary).
+    // This is the native analog of runtime.js svgRaster — the texture is always >= display
+    // size, so SDL only ever downsamples it = sharp, instead of upscaling a frozen raster.
+    func svgTexForFootprint(_ img: Int32, _ needDevW: Float, _ needDevH: Float) -> ImgRec? {
+        guard img > 0, Int(img) < images.count, var rec = images[Int(img)] else { return nil }
+        guard let bytes = rec.svgBytes, rec.w > 0, rec.h > 0 else { return rec }   // raster image: skip
+        let needMult = max(needDevW / Float(rec.w), needDevH / Float(rec.h))
+        var mult: Int32 = 1
+        while Float(mult) < needMult && mult < 16 { mult <<= 1 }   // smallest pow2 >= need, capped
+        guard mult > rec.rasterMult else { return rec }            // already crisp enough
+        var tw: Int32 = 0, th: Int32 = 0, lw: Int32 = 0, lh: Int32 = 0
+        let px = bytes.withUnsafeBufferPointer {
+            kit_svg_decode_hi($0.baseAddress, Int32(bytes.count), mult, &tw, &th, &lw, &lh)
+        }
+        guard let px, tw > 0, th > 0 else { return rec }
+        let nt = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, tw, th)
+        var r = SDL_Rect(x: 0, y: 0, w: tw, h: th)
+        _ = SDL_UpdateTexture(nt, &r, px, tw * 4)
+        kit_stb_free(px)
+        _ = SDL_SetTextureScaleMode(nt, SDL_SCALEMODE_LINEAR)
+        _ = SDL_SetTextureBlendMode(nt, SDL_BLENDMODE_BLEND)
+        retireTexture(rec.tex)
+        rec.tex = nt
+        rec.rasterMult = mult
+        images[Int(img)] = rec
+        return rec
+    }
+
     func imageByName(_ name: String) -> Int32 {
         if let id = imageNames[name] { return id }
         var data = assetBytes(name)
@@ -816,6 +854,7 @@ final class Kit {
         var h: Int32 = 0
         var logW: Int32 = 0   // logical/intrinsic size — drives UVs + img_width/height
         var logH: Int32 = 0
+        var svgMult: Int32 = 0   // >0 once SVG-decoded: the intrinsic multiple this first raster used
         var pixels = data.withUnsafeBufferPointer { kit_png_decode($0.baseAddress, Int32(data.count), &w, &h) }
         if pixels != nil { logW = w; logH = h }
         if pixels == nil {   // not PNG/JPEG — menu sprites, parallax + gameplay art are .svg
@@ -826,6 +865,7 @@ final class Kit {
             // px per logical unit; ss=2 floor covers any pre-first-clear decode.
             let ss = Int32(max(2, min(4, Int(baseScale.rounded()))))
             pixels = data.withUnsafeBufferPointer { kit_svg_decode_hi($0.baseAddress, Int32(data.count), ss, &w, &h, &logW, &logH) }
+            svgMult = ss
         }
         guard let pixels, w > 0, h > 0, logW > 0, logH > 0 else { if imgDbg { print("IMG DECODE-FAIL: \(name)") }; return 0 }
         if imgDbg { print("IMG OK: \(name) -> tex \(w)x\(h) / logical \(logW)x\(logH)") }
@@ -833,8 +873,11 @@ final class Kit {
         var rect = SDL_Rect(x: 0, y: 0, w: w, h: h)
         _ = SDL_UpdateTexture(tex, &rect, pixels, w * 4)
         kit_stb_free(pixels)
+        _ = SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_LINEAR)   // tex is >= display footprint ⇒ downsample-only ⇒ sharp
         _ = SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND)
-        let id = registerImage(ImgRec(tex: tex, w: logW, h: logH))
+        var rec = ImgRec(tex: tex, w: logW, h: logH)
+        if svgMult > 0 { rec.svgBytes = data; rec.rasterMult = svgMult }   // vector: enable footprint re-raster
+        let id = registerImage(rec)
         imageNames[name] = id
         return id
     }
@@ -1786,13 +1829,19 @@ func kitHostPresent() {
     k.reapVoices()
     k.ttsReap()
     if let screen = k.screenTex {
+        let _b0 = SDL_GetTicksNS()
         _ = SDL_SetRenderTarget(k.renderer, nil)
         _ = SDL_SetTextureBlendMode(screen, SDL_BLENDMODE_NONE)
         _ = SDL_RenderTexture(k.renderer, screen, nil, nil)
+        k.profBlitNs += SDL_GetTicksNS() - _b0
+        let _v0 = SDL_GetTicksNS()
         _ = SDL_RenderPresent(k.renderer)
+        k.profVsyncNs += SDL_GetTicksNS() - _v0
         _ = SDL_SetRenderTarget(k.renderer, screen)
     } else {
+        let _v0 = SDL_GetTicksNS()
         _ = SDL_RenderPresent(k.renderer)
+        k.profVsyncNs += SDL_GetTicksNS() - _v0
     }
     for tex in k.deadTextures { SDL_DestroyTexture(tex) }
     k.deadTextures.removeAll(keepingCapacity: true)
@@ -2173,7 +2222,16 @@ func gfx_draw_image(_ img: Int32, _ sx: Float, _ sy: Float, _ sw: Float, _ sh: F
     // consume the one-shot particle tint FIRST, before the missing-texture early return,
     // so an unloaded-texture draw can't strand it onto the next frame's first draw.
     let pt = k.partTint; k.partTint = nil
-    guard img > 0, Int(img) < k.images.count, let rec = k.images[Int(img)], rec.tex != nil else { return }
+    guard img > 0, Int(img) < k.images.count, let rec0 = k.images[Int(img)], rec0.tex != nil else { return }
+    // Vector sprites re-rasterize at their live device footprint so scaling never blurs.
+    let rec: Kit.ImgRec
+    if rec0.svgBytes != nil {
+        let m = k.mat
+        rec = k.svgTexForFootprint(img, dw * SDL_sqrtf(m.a * m.a + m.b * m.b),
+                                        dh * SDL_sqrtf(m.c * m.c + m.d * m.d)) ?? rec0
+    } else {
+        rec = rec0
+    }
     let a = Float(rgba & 0xFF) / 255 * k.alpha
     var color = SDL_FColor(r: 1, g: 1, b: 1, a: a)
     if let pt = pt {   // mix white -> tint by blend factor (SpriteKit colorBlendFactor)
