@@ -15,6 +15,100 @@ unsigned char* kit_png_decode(const unsigned char* bytes, int len, int* w, int* 
     return stbi_load_from_memory(bytes, len, w, h, &comp, 4);
 }
 
+/* SVG -> RGBA raster. The web host renders SVG through the browser; on native we
+   rasterize at the SVG's intrinsic size. Returns malloc'd straight-alpha RGBA
+   (free via kit_stb_free), 0 on failure.
+
+   Two backends, selected at compile time:
+   - resvg  (-DKIT_USE_RESVG): a FULL static-SVG renderer. Handles embedded raster
+     <image> (base64 PNG), <mask> and <clipPath> — i.e. what the browser does.
+     Required for UFO's PDF-derived emoji/effect/parallax SVGs (nanosvg renders
+     those blank, which is why sprites showed as boxes and skyMtns came back 0x0).
+   - nanosvg (default): minimal vector-path rasterizer. Fine for pure-vector SVGs;
+     keeps games that don't link libresvg building unchanged. */
+#include <string.h>
+#ifdef KIT_USE_RESVG
+#include "resvg.h"
+/* Supersampled SVG raster. ss = device scale (e.g. 3 on a 1920px window of a 626px
+   logical game). texW/texH = the ss-times pixel buffer that becomes the SDL texture;
+   logW/logH = the SVG's intrinsic size. The host samples the hi-res texture through
+   normalized UVs that use the LOGICAL size, so sprites are crisp at the screen
+   resolution instead of upscaling a tiny declared-canvas raster (the soft grass/dirt).
+   resvg renders at any size, so this is the same 1:1-with-screen trick canvas2d does. */
+unsigned char* kit_svg_decode_hi(const unsigned char* bytes, int len, int ss,
+                                 int* texW, int* texH, int* logW, int* logH) {
+    if (ss < 1) ss = 1;
+    resvg_options* opt = resvg_options_create();
+    resvg_render_tree* tree = 0;
+    int32_t err = resvg_parse_tree_from_data((const char*)bytes, (uintptr_t)len, opt, &tree);
+    resvg_options_destroy(opt);
+    if (err != RESVG_OK || !tree) return 0;
+    resvg_size sz = resvg_get_image_size(tree);
+    int iw = (int)(sz.width + 0.5f), ih = (int)(sz.height + 0.5f);
+    if (iw < 1 || ih < 1) { resvg_tree_destroy(tree); return 0; }
+    int tw = iw * ss, th = ih * ss;
+    while (ss > 1 && (long)tw * th > 64L * 1024 * 1024) { ss--; tw = iw * ss; th = ih * ss; }
+    if ((long)tw * th > 64L * 1024 * 1024) { resvg_tree_destroy(tree); return 0; }
+    unsigned char* px = (unsigned char*)calloc((size_t)tw * th, 4);
+    if (!px) { resvg_tree_destroy(tree); return 0; }
+    resvg_transform ts = resvg_transform_identity();
+    ts.a = (float)ss; ts.d = (float)ss;   /* scale the SVG up into the ss-times buffer */
+    resvg_render(tree, ts, (uint32_t)tw, (uint32_t)th, (char*)px);
+    resvg_tree_destroy(tree);
+    /* resvg emits PREMULTIPLIED RGBA8888; un-premultiply to straight alpha so the
+       host's SDL_BLENDMODE_BLEND + tint path stays correct and edges don't darken. */
+    for (long i = 0, n = (long)tw * th; i < n; i++) {
+        unsigned char a = px[i * 4 + 3];
+        if (a != 0 && a != 255) {
+            for (int c = 0; c < 3; c++) {
+                int v = (px[i * 4 + c] * 255 + a / 2) / a;
+                px[i * 4 + c] = (unsigned char)(v > 255 ? 255 : v);
+            }
+        }
+    }
+    *texW = tw; *texH = th; *logW = iw; *logH = ih;
+    return px;
+}
+unsigned char* kit_svg_decode(const unsigned char* bytes, int len, int* w, int* h) {
+    int tw, th;   /* ss=1: texture == intrinsic, back-compat for non-supersampled callers */
+    return kit_svg_decode_hi(bytes, len, 1, &tw, &th, w, h);
+}
+#else
+#define NANOSVG_IMPLEMENTATION
+#define NANOSVGRAST_IMPLEMENTATION
+#include "nanosvg.h"
+#include "nanosvgrast.h"
+unsigned char* kit_svg_decode_hi(const unsigned char* bytes, int len, int ss,
+                                 int* texW, int* texH, int* logW, int* logH) {
+    if (ss < 1) ss = 1;
+    char* src = (char*)malloc((size_t)len + 1);   /* nsvgParse mutates + needs NUL */
+    if (!src) return 0;
+    memcpy(src, bytes, (size_t)len);
+    src[len] = 0;
+    NSVGimage* img = nsvgParse(src, "px", 96.0f);
+    free(src);
+    if (!img) return 0;
+    int iw = (int)(img->width + 0.5f), ih = (int)(img->height + 0.5f);
+    if (iw < 1 || ih < 1) { nsvgDelete(img); return 0; }
+    int tw = iw * ss, th = ih * ss;
+    while (ss > 1 && (long)tw * th > 64L * 1024 * 1024) { ss--; tw = iw * ss; th = ih * ss; }
+    if ((long)tw * th > 64L * 1024 * 1024) { nsvgDelete(img); return 0; }
+    NSVGrasterizer* rast = nsvgCreateRasterizer();
+    if (!rast) { nsvgDelete(img); return 0; }
+    unsigned char* px = (unsigned char*)malloc((size_t)tw * th * 4);
+    if (!px) { nsvgDeleteRasterizer(rast); nsvgDelete(img); return 0; }
+    nsvgRasterize(rast, img, 0, 0, (float)ss, px, tw, th, tw * 4);   /* ss = render scale */
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(img);
+    *texW = tw; *texH = th; *logW = iw; *logH = ih;
+    return px;
+}
+unsigned char* kit_svg_decode(const unsigned char* bytes, int len, int* w, int* h) {
+    int tw, th;
+    return kit_svg_decode_hi(bytes, len, 1, &tw, &th, w, h);
+}
+#endif
+
 void kit_stb_free(void* p) {
     free(p);
 }

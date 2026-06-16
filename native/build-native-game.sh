@@ -41,7 +41,17 @@ detect_sys() {
 }
 detect_sys
 
-TC="$(dirname "$(dirname "$(TOOLCHAINS=${SWIFT_TOOLCHAIN:-org.swift.6.3.2-release} xcrun --toolchain swift -f swiftc)")")"
+# Pin to the stable 6.3.2 RELEASE toolchain explicitly: `xcrun --toolchain swift`
+# resolves to whatever dev-snapshot is installed (which has Abort-trap'd compiling
+# Embedded host code), and TOOLCHAINS=org.swift.6.3.2-release mis-resolves to
+# XcodeDefault. The swift-6.3.2-RELEASE toolchain is the one carrying the
+# arm64-apple-macos embedded stdlib we link below. Override with SWIFTC=.
+SWIFTC="${SWIFTC:-$HOME/Library/Developer/Toolchains/swift-6.3.2-RELEASE.xctoolchain/usr/bin/swiftc}"
+[ -x "$SWIFTC" ] || SWIFTC="$(xcrun --toolchain swift -f swiftc)"
+TC="$(dirname "$(dirname "$SWIFTC")")"
+# Invoking swiftc directly (not via xcrun) loses the SDK sysroot, so the
+# ClangImporter can't find <math.h> when building C modules (CBox2D). Set it.
+export SDKROOT="$(xcrun --show-sdk-path)"
 B="$(mktemp -d)"
 trap 'rm -rf "$B"' EXIT
 
@@ -70,7 +80,7 @@ build_mod() {
   for f in "$FW/Sources/$m"/*.swift; do
     sed -e 's/@MainActor//g' -e 's/@preconcurrency//g' "$f" > "$B/src/$m/$(basename "$f")"
   done
-  xcrun --toolchain swift swiftc "${EMB[@]}" -module-name "$m" \
+  "$SWIFTC" "${EMB[@]}" -module-name "$m" \
     -emit-module -emit-module-path "$B/mod/$m.swiftmodule" \
     -c "$B/src/$m"/*.swift -o "$B/mod/$m.o"
 }
@@ -83,7 +93,7 @@ for f in "$GAME_SRC"/*.swift; do
 done
 cp sdl3-backend.swift kit-shader.swift "$B/src/game/"
 cp "$GAME_MAIN" "$B/src/game/native-main.swift"
-xcrun --toolchain swift swiftc "${EMB[@]}" -module-name GameNative \
+"$SWIFTC" "${EMB[@]}" -module-name GameNative \
   -c "$B/src/game"/*.swift -o "$B/mod/game.o"
 
 echo "→ assets (baked into the binary when ASSETS_DIR is set)"
@@ -126,7 +136,7 @@ text = open(hdr).read()
 protos = re.findall(r"WABI\s+([^;]+);", text)
 implemented = {
     "js_log", "gfx_clear", "gfx_save", "gfx_restore", "gfx_translate",
-    "gfx_rotate", "gfx_scale", "gfx_set_alpha", "gfx_stroke_poly",
+    "gfx_rotate", "gfx_scale", "gfx_set_alpha", "gfx_set_tint", "gfx_stroke_poly",
     "gfx_fill_poly", "gfx_fill_circle", "gfx_stroke_circle", "gfx_fill_rect",
     "gfx_stroke_rect", "gfx_set_blend", "evt_poll", "snd_by_name", "snd_play", "snd_stop",
     "snd_set_volume", "snd_set_pan", "store_get", "store_set", "gp_connected",
@@ -169,7 +179,7 @@ print(f"  {len(lines) - 3} stubbed")
 PYEOF
 clang -c -O2 -I "$FW/Sources/KitABI/include" -target arm64-apple-macos14 "$B/stubs.c" -o "$B/mod/stubs.o"
 clang -c -O2 -I "$FW/Sources/KitABI/include" -target arm64-apple-macos14 "$FW/Sources/KitABI/shim.c" -o "$B/mod/shim.o"
-clang -c -O2 -target arm64-apple-macos14 "$PWD/kit_stb.c" -o "$B/mod/kit_stb.o"
+clang -c -O2 ${KIT_STB_CFLAGS:-} -target arm64-apple-macos14 "$PWD/kit_stb.c" -o "$B/mod/kit_stb.o"
 
 echo "→ link"
 SDL_LINK=(-L "$SYS_LIB" -lSDL3)

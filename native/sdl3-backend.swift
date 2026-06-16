@@ -35,6 +35,12 @@ func kit_asset_data(_ name: UnsafePointer<CChar>?, _ len: UnsafeMutablePointer<U
 @_silgen_name("kit_png_decode")
 func kit_png_decode(_ bytes: UnsafePointer<UInt8>?, _ len: Int32, _ w: UnsafeMutablePointer<Int32>?, _ h: UnsafeMutablePointer<Int32>?) -> UnsafeMutablePointer<UInt8>?
 
+@_silgen_name("kit_svg_decode")
+func kit_svg_decode(_ bytes: UnsafePointer<UInt8>?, _ len: Int32, _ w: UnsafeMutablePointer<Int32>?, _ h: UnsafeMutablePointer<Int32>?) -> UnsafeMutablePointer<UInt8>?
+
+@_silgen_name("kit_svg_decode_hi")
+func kit_svg_decode_hi(_ bytes: UnsafePointer<UInt8>?, _ len: Int32, _ ss: Int32, _ texW: UnsafeMutablePointer<Int32>?, _ texH: UnsafeMutablePointer<Int32>?, _ logW: UnsafeMutablePointer<Int32>?, _ logH: UnsafeMutablePointer<Int32>?) -> UnsafeMutablePointer<UInt8>?
+
 @_silgen_name("kit_stb_free")
 func kit_stb_free(_ p: UnsafeMutableRawPointer?)
 
@@ -72,6 +78,14 @@ final class Kit {
     var mat = Mat()
     var stack: [Mat] = []
     var alpha: Float = 1
+    // one-shot particle tint: gfx_set_tint sets it, the next gfx_draw_image consumes
+    // it (SpriteKit colorBlendFactor). r,g,b in 0...1, bf = blend amount; nil = none.
+    var partTint: (r: Float, g: Float, b: Float, bf: Float)? = nil
+    // per-frame profiler (ns accumulated, reset each second): image-draw vs text-draw
+    // vs present time, to compare against the web's img/txt/rest HUD.
+    var profImgNs: UInt64 = 0
+    var profTxtNs: UInt64 = 0
+    var profPresentNs: UInt64 = 0
     var events: [(Int32, Int32, Int32, Int32, Int32)] = []
     var evtMutex: OpaquePointer? = nil
 
@@ -790,17 +804,37 @@ final class Kit {
         var data = assetBytes(name)
         if data == nil { data = assetBytes("images/" + name) }
         if data == nil { data = assetBytes("images/" + name + ".png") }
+        // Scenes reference textures by bare name (e.g. "latestlogo"); UFO's art is
+        // .svg, so without these the lookup only ever tried .png and every sprite
+        // fell through to a placeholder box. (BossMan ships .png, so it "worked".)
+        if data == nil { data = assetBytes("images/" + name + ".svg") }
+        if data == nil { data = assetBytes(name + ".svg") }
         if data == nil { data = assetBytes(baseName(name)) }
-        guard let data else { return 0 }
-        var w: Int32 = 0
+        let imgDbg = ("KIT_IMG_DEBUG".withCString { SDL_getenv($0) }) != nil
+        guard let data else { if imgDbg { print("IMG MISS: \(name)") }; return 0 }
+        var w: Int32 = 0   // texture pixel size (supersampled for SVG)
         var h: Int32 = 0
-        guard let pixels = data.withUnsafeBufferPointer({ kit_png_decode($0.baseAddress, Int32(data.count), &w, &h) }) else { return 0 }
+        var logW: Int32 = 0   // logical/intrinsic size — drives UVs + img_width/height
+        var logH: Int32 = 0
+        var pixels = data.withUnsafeBufferPointer { kit_png_decode($0.baseAddress, Int32(data.count), &w, &h) }
+        if pixels != nil { logW = w; logH = h }
+        if pixels == nil {   // not PNG/JPEG — menu sprites, parallax + gameplay art are .svg
+            // Supersample SVGs to the device scale so embedded detail survives instead of
+            // rasterizing the tiny declared canvas and upscaling (the soft grass/dirt).
+            // The hi-res texture is sampled through normalized UVs that use the LOGICAL
+            // size, so it's res-independent with no UV/atlas change. baseScale = screen
+            // px per logical unit; ss=2 floor covers any pre-first-clear decode.
+            let ss = Int32(max(2, min(4, Int(baseScale.rounded()))))
+            pixels = data.withUnsafeBufferPointer { kit_svg_decode_hi($0.baseAddress, Int32(data.count), ss, &w, &h, &logW, &logH) }
+        }
+        guard let pixels, w > 0, h > 0, logW > 0, logH > 0 else { if imgDbg { print("IMG DECODE-FAIL: \(name)") }; return 0 }
+        if imgDbg { print("IMG OK: \(name) -> tex \(w)x\(h) / logical \(logW)x\(logH)") }
         let tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, w, h)
         var rect = SDL_Rect(x: 0, y: 0, w: w, h: h)
         _ = SDL_UpdateTexture(tex, &rect, pixels, w * 4)
         kit_stb_free(pixels)
         _ = SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND)
-        let id = registerImage(ImgRec(tex: tex, w: w, h: h))
+        let id = registerImage(ImgRec(tex: tex, w: logW, h: logH))
         imageNames[name] = id
         return id
     }
@@ -811,6 +845,18 @@ final class Kit {
         if data == nil { data = assetBytes("fonts/" + name) }
         if data == nil { data = assetBytes("fonts/" + name + ".ttf") }
         if data == nil { data = assetBytes(baseName(name)) }
+        // Not in the cart — fall back to the OS font directories so unbundled families
+        // (e.g. "AmericanTypewriter") resolve to the real system face instead of nothing.
+        // EXCEPT the color-emoji families: they must return 0 so emoji codepoints route to
+        // emojiGlyph (the sbix/CBDT color path). Loading Apple Color Emoji.ttc as a plain
+        // outline font makes kit_font_glyph_index != 0, so the glyph draws BLANK instead.
+        if data == nil, name != "Apple Color Emoji", name != "NotoColorEmoji" {
+            for dir in ["/System/Library/Fonts/", "/System/Library/Fonts/Supplemental/", "/Library/Fonts/"] where data == nil {
+                for ext in [".ttf", ".ttc", ".otf"] where data == nil {
+                    data = assetBytes(dir + name + ext)
+                }
+            }
+        }
         guard let data else { return 0 }
         let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: data.count)
         for i in 0..<data.count { buf[i] = data[i] }
@@ -826,16 +872,19 @@ final class Kit {
 
     func resolveFont(_ font: Int32) -> UnsafeMutableRawPointer? {
         if font > 0, Int(font) < fontInfos.count { return fontInfos[Int(font)] }
-        if defaultFont < 0 {
-            defaultFont = 0
-            for candidate in ["JetBrainsMono-Bold.ttf", "Menlo-Regular.ttf", "Menlo-Bold.ttf"] {
+        // font 0 = "use the default face" (a missing/emoji family). Resolve to ANY real
+        // font we can load and RETRY each call until one exists — the old code cached this
+        // once, pinning defaultFont to nil if no TTF had loaded yet, which blanked the
+        // title's emoji + copyright labels (gfx_draw_text bails before the emoji-glyph
+        // fallback). Emoji codepoints still route to emojiGlyph after this resolves.
+        if defaultFont <= 0 {
+            for candidate in ["Emulogic.ttf", "JetBrainsMono-Bold.ttf", "Menlo-Regular.ttf", "Menlo-Bold.ttf"] {
                 let id = fontByName(candidate)
-                if id > 0 {
-                    defaultFont = id
-                    break
-                }
+                if id > 0 { defaultFont = id; break }
             }
-            if defaultFont == 0, fontInfos.count > 1 { defaultFont = 1 }
+            if defaultFont <= 0 {
+                for i in 1..<fontInfos.count where fontInfos[i] != nil { defaultFont = Int32(i); break }
+            }
         }
         if defaultFont > 0, Int(defaultFont) < fontInfos.count { return fontInfos[Int(defaultFont)] }
         return nil
@@ -1760,6 +1809,7 @@ func js_log(_ p: UnsafePointer<CChar>?, _ len: Int32) {
 @_cdecl("gfx_clear")
 func gfx_clear(_ rgba: UInt32) {
     let k = Kit.shared
+    k.partTint = nil   // drop any stranded particle tint so it can't bleed into this frame
     if k.targets.contains(where: { $0 != nil }) {
         let c = k.fcolor(rgba)
         _ = SDL_SetRenderDrawColorFloat(k.renderer, c.r, c.g, c.b, 1)
@@ -2107,13 +2157,30 @@ func img_polygon_from_alpha(_ img: Int32, _ alphaThreshold: Float,
     return Int32(written * 2)
 }
 
+@_cdecl("gfx_set_tint")
+func gfx_set_tint(_ r: Float, _ g: Float, _ b: Float, _ bf: Float) {
+    // SKEmitterNode particle colorBlendFactor: stored one-shot, consumed by the next
+    // gfx_draw_image. Without it the import is unlinked and the emitter draw traps
+    // ("failed to call unlinked import function (env, gfx_set_tint)").
+    Kit.shared.partTint = bf > 0 ? (r: r, g: g, b: b, bf: min(1, bf)) : nil
+}
+
 @_cdecl("gfx_draw_image")
 func gfx_draw_image(_ img: Int32, _ sx: Float, _ sy: Float, _ sw: Float, _ sh: Float,
                     _ dx: Float, _ dy: Float, _ dw: Float, _ dh: Float, _ rgba: UInt32) {
     let k = Kit.shared
+    let _pt0 = SDL_GetTicksNS(); defer { k.profImgNs += SDL_GetTicksNS() - _pt0 }
+    // consume the one-shot particle tint FIRST, before the missing-texture early return,
+    // so an unloaded-texture draw can't strand it onto the next frame's first draw.
+    let pt = k.partTint; k.partTint = nil
     guard img > 0, Int(img) < k.images.count, let rec = k.images[Int(img)], rec.tex != nil else { return }
     let a = Float(rgba & 0xFF) / 255 * k.alpha
-    let color = SDL_FColor(r: 1, g: 1, b: 1, a: a)
+    var color = SDL_FColor(r: 1, g: 1, b: 1, a: a)
+    if let pt = pt {   // mix white -> tint by blend factor (SpriteKit colorBlendFactor)
+        color.r = 1 - pt.bf + pt.r * pt.bf
+        color.g = 1 - pt.bf + pt.g * pt.bf
+        color.b = 1 - pt.bf + pt.b * pt.bf
+    }
     var u0: Float = 0
     var v0: Float = 0
     var u1: Float = 1
@@ -2252,6 +2319,7 @@ func gfx_set_text_baseline(_ mode: Int32) {
 func gfx_draw_text(_ font: Int32, _ utf8: UnsafePointer<CChar>?, _ len: Int32,
                    _ x: Float, _ y: Float, _ sizePx: Int32, _ rgba: UInt32, _ spacing: Float) {
     let k = Kit.shared
+    let _pt0 = SDL_GetTicksNS(); defer { k.profTxtNs += SDL_GetTicksNS() - _pt0 }
     guard let info = k.resolveFont(font) else { return }
     let cps = k.decodeUTF8(utf8, len)
     if cps.isEmpty { return }
