@@ -382,10 +382,17 @@ final class RunningAction {
             if child!.step(dt, node: node) { child = RunningAction(a) }
             return false
         // Embedded -wmo miscompiles calling this enum-payload () -> Void closure
-        // directly here (call_indirect signature mismatch). Hand it to the run-loop
-        // queue instead — the same path boot/presentScene use, which works.
-        case .run(let b): DispatchQueue.shared.async(execute: b)
-        return true
+        // directly here (call_indirect signature mismatch), so hand it to the run-loop
+        // queue (the path boot/presentScene use). Non-embedded calls it directly — no
+        // miscompile there, and async(execute:) would trip Swift 6 strict concurrency
+        // (passing a non-Sendable closure).
+        case .run(let b):
+            #if hasFeature(Embedded)
+            DispatchQueue.shared.async(execute: b)
+            #else
+            b()
+            #endif
+            return true
         case .removeFromParent: node.removeFromParent()
         return true
         case let .hide(value): node.isHidden = value
