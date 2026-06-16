@@ -368,8 +368,11 @@ public final class CADisplayLink {
         guard registered == false else { return }
         registered = true
         #if hasFeature(Embedded)
-        // Embedded Swift has no `weak`; the hook still self-guards via `alive`,
-        // and a CADisplayLink lives for its driver's lifetime (never freed mid-run).
+        // Embedded Swift has no `weak`; the hook self-guards via `alive`. NOTE: this
+        // per-frame hook list is append-only (invalidate() only sets alive=false), so
+        // a CADisplayLink whose driver is freed mid-run MUST be invalidate()'d before
+        // teardown, or this would tick a stale link. (Prefer driving per-frame work
+        // from SKScene.update(_:), which only runs for the presented scene.)
         KitRunLoop.addPerFrameHook { [unowned(unsafe) self] in
             guard self.alive, self.isPaused == false else { return }
             self.tick?()

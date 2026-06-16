@@ -210,10 +210,10 @@ public final class SKEmitterNode: SKNode {
         let ang = emissionAngle + (halfAng > 0 ? Double.random(in: -halfAng...halfAng) : 0)
         let speed = particleSpeed + (particleSpeedRange > 0 ? Double.random(in: -particleSpeedRange/2 ... particleSpeedRange/2) : 0)
         let life = particleLifetime + (particleLifetimeRange > 0 ? Double.random(in: -particleLifetimeRange/2 ... particleLifetimeRange/2) : 0)
-        let step = Double.pi / 8                       // 22.5° per table entry
-        var idx = Int(ang / step) % 16
-        if idx < 0 { idx += 16 }
-        let (cx, cy) = SKEmitterNode.UNIT[idx]
+        // Continuous emission direction (Apple uses the exact angle). The old
+        // 16-entry UNIT-table lookup quantized 360° radial emitters (aura,
+        // blackHole, smoke, magic) into chunky spokes instead of a smooth halo.
+        let cx = cos(ang), cy = sin(ang)
 
         // Position jitter inside particlePositionRange (treated as ±halfRange).
         let px = particlePosition.x + (particlePositionRange.dx > 0
@@ -280,19 +280,22 @@ public final class SKEmitterNode: SKNode {
                 // sequence-coloured white-hole rendered near-black and looked
                 // missing. lerp(white -> particle colour) by blendFactor.
                 let bf = p.blendFactor
-                let c = SKColor(red:   1 + (p.r - 1) * bf,
-                                green: 1 + (p.g - 1) * bf,
-                                blue:  1 + (p.b - 1) * bf, alpha: aOut)
                 let w = Float(particleSize.width * p.scale)
                 let h = Float(particleSize.height * p.scale)
                 gfx_save()
                 gfx_translate(Float(p.x), Float(p.y))
                 if p.rotation != 0 { gfx_rotate(Float(p.rotation * 180.0 / Double.pi)) }
+                // Apple colorBlendFactor: blend the texture TOWARD the particle's
+                // current sequence colour by bf — the runtime does tex*(1-bf)+colour*bf
+                // masked by alpha (source-atop). Correct for the COLOUR emoji textures
+                // (smoke/magic/fire); white-texture emitters (aura/blackHole) render
+                // identically. The draw rgba below carries the particle ALPHA only.
+                gfx_set_tint(Float(p.r), Float(p.g), Float(p.b), Float(bf))
                 // sw/sh MUST be -1 (full-source sentinel), NOT 0. A 0-size source
                 // rect makes the runtime slice a 0×0 region (SVG) / throw (raster)
                 // and the particle draws nothing — the white-hole was invisible
                 // even though it spawned and moved. SKSpriteNode passes -1/-1 too.
-                gfx_draw_image(tex.handle, 0, 0, -1, -1, -w/2, -h/2, w, h, c.rgba)
+                gfx_draw_image(tex.handle, 0, 0, -1, -1, -w/2, -h/2, w, h, SKColor(red: 1, green: 1, blue: 1, alpha: aOut).rgba)
                 gfx_restore()
             } else {
                 // Untextured: the particle is just its own colour.

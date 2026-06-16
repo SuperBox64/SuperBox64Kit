@@ -74,9 +74,12 @@ public enum SKSceneLoader {
 
     // ---- File loader ----------------------------------------------------------
     private static func loadJSON(named name: String) -> JSONValue? {
-        // Try a few common spellings. The CLI emits "<basename>.json" so the
-        // most common case is direct.
-        for candidate in [name, "\(name).json", "\(name).sks.json"] {
+        // Try a few common spellings. The CLI emits "<basename>.json". A caller may
+        // also pass Apple's ".sks" form (e.g. SKEmitterNode(fileNamed:"fireParticle.sks"))
+        // — strip it so it resolves to "<basename>.json" instead of failing on
+        // "<name>.sks.json" (that bug returned nil, so the ship-crash fire never spawned).
+        let base = name.hasSuffix(".sks") ? String(name.dropLast(4)) : name
+        for candidate in [name, "\(base).json", "\(name).json", "\(name).sks.json"] {
             if let bytes = readAssetText(candidate),
                let obj = parseJSON(bytes), obj.objectValue != nil {
                 return obj
@@ -275,6 +278,13 @@ public enum SKSceneLoader {
         if let v = readCGFloat(json["particleColorBlendFactorRange"]) { e.particleColorBlendFactorRange = v }
         if let v = readCGFloat(json["particleColorBlendFactorSpeed"]) { e.particleColorBlendFactorSpeed = v }
         if let s = readSize(json["particleSize"])              { e.particleSize = s }
+        // Spawn spread. WITHOUT this every particle spawned at the emitter origin
+        // (a tight dot) — Apple's magicParticle uses Position Range 16x16, fire 64x0.
+        if let p = readPoint(json["particlePosition"])         { e.particlePosition = p }
+        if let arr = json["particlePositionRange"]?.arrayValue, arr.count >= 2,
+           let x = readCGFloat(arr[0]), let y = readCGFloat(arr[1]) {
+            e.particlePositionRange = CGVector(dx: x, dy: y)
+        }
         if let texName = json["particleTexture"]?.stringValue {
             e.particleTexture = SKTexture(imageNamed: texName)
         }

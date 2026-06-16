@@ -381,7 +381,10 @@ final class RunningAction {
             if child == nil { child = RunningAction(a) }
             if child!.step(dt, node: node) { child = RunningAction(a) }
             return false
-        case .run(let b): b()
+        // Embedded -wmo miscompiles calling this enum-payload () -> Void closure
+        // directly here (call_indirect signature mismatch). Hand it to the run-loop
+        // queue instead — the same path boot/presentScene use, which works.
+        case .run(let b): DispatchQueue.shared.async(execute: b)
         return true
         case .removeFromParent: node.removeFromParent()
         return true

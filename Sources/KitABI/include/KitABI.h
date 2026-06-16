@@ -19,6 +19,12 @@ WABI void gfx_snap_translation(void);
 WABI void gfx_rotate(float degrees);
 WABI void gfx_set_alpha(float a);
 WABI void gfx_set_blend(int mode);
+/* One-shot Apple colorBlendFactor tint for the NEXT gfx_draw_image: the runtime
+ * blends the texture toward (r,g,b) by bf -> tex*(1-bf)+color*bf, masked by the
+ * texture's alpha (SKEmitterNode particleColorBlendFactor). r,g,b,bf are 0..1;
+ * bf<=0 = no tint. Auto-clears after one draw. Unlike the rgba-multiply tint this
+ * is correct for COLOURED textures (the emoji particle emitters). */
+WABI void gfx_set_tint(float r, float g, float b, float bf);
 /* Stroke line styling so SKShapeNode.lineJoin/lineCap behave like Apple's.
  * join: 0=miter 1=round 2=bevel; cap: 0=butt 1=round 2=square. */
 WABI void gfx_set_line_style(int join, int cap, float miterLimit);

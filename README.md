@@ -209,6 +209,7 @@ The reference Embedded build pipeline (exact flags, module order, link line) liv
 
 - [WasmKit](https://github.com/SuperBox64/WasmKit) — JavaScript runtime, host page, and C++ SFML shim
 - [Boss-Man](https://github.com/macOS26/Boss-Man) — full arcade game built with this engine, shipping on 6 platforms from one Swift source
+- [UFO Emoji Arcade](https://github.com/SuperBox64/UFO-Emoji-Arcade) — 5-star App Store SpriteKit game running in the browser via this engine, source unchanged
 
 ---
 

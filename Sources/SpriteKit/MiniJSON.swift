@@ -140,7 +140,11 @@ private struct JSONParser {
                 case "r":  out.append("\r")
                 case "t":  out.append("\t")
                 case "u":
-                    // 4 hex digits.
+                    // 4 hex digits → a UTF-16 code unit. Emoji (> U+FFFF) arrive as
+                    // a surrogate PAIR (👾); a lone high surrogate is not a
+                    // valid scalar (Unicode.Scalar returns nil → the char is dropped),
+                    // which silently ate the fire emitter's escaped texture name.
+                    // Combine a high+low surrogate pair into the real scalar.
                     if pos + 4 > chars.count { return nil }
                     var code: UInt32 = 0
                     for _ in 0..<4 {
@@ -149,6 +153,21 @@ private struct JSONParser {
                         let v = hexValue(h)
                         if v < 0 { return nil }
                         code = code * 16 + UInt32(v)
+                    }
+                    if code >= 0xD800 && code <= 0xDBFF,
+                       pos + 6 <= chars.count, chars[pos] == "\\", chars[pos + 1] == "u" {
+                        pos += 2
+                        var lo: UInt32 = 0
+                        for _ in 0..<4 {
+                            let h = chars[pos]
+                            pos += 1
+                            let v = hexValue(h)
+                            if v < 0 { return nil }
+                            lo = lo * 16 + UInt32(v)
+                        }
+                        if lo >= 0xDC00 && lo <= 0xDFFF {
+                            code = 0x10000 + ((code - 0xD800) << 10) + (lo - 0xDC00)
+                        }
                     }
                     if let scalar = Unicode.Scalar(code) { out.append(Character(scalar)) }
                 default: return nil
