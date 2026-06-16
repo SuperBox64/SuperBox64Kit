@@ -86,6 +86,15 @@ final class Kit {
     var profImgNs: UInt64 = 0
     var profTxtNs: UInt64 = 0
     var profPresentNs: UInt64 = 0
+    var reRasterBudget: Int = 2   // SVG re-rasters allowed per frame (bounds the particle-scale hitch)
+    var dbgOverlayFlags: Int32 = 0   // dbg_set_overlays: bit0 = FPS line, bit1 = breakdown line
+    var hudLine1: String = ""        // host pushes runtime.js-style overlay lines (FPS/frame/min/avg/max)
+    var hudLine2: String = ""        // img/txt counts + rest
+    var hudLine3: String = ""        // glyph + img# cache sizes
+    var profImgCount: UInt64 = 0     // # gfx_draw_image calls this window (matches web "img 12/..")
+    var profTxtCount: UInt64 = 0     // # gfx_draw_text calls this window (matches web "txt 10/..")
+    var glyphCacheCount: Int { glyphCache.count }                       // web HUD "glyph"
+    var imageLiveCount: Int { var n = 0; for r in images where r != nil { n += 1 }; return n }  // web "img#"
     var profCartNs: UInt64 = 0   // wasm frame() execution incl. its gfx callbacks (WAMR)
     var profBlitNs: UInt64 = 0   // offscreen screenTex -> window blit (queue only)
     var profVsyncNs: UInt64 = 0  // SDL_RenderPresent: GPU flush + vblank wait (mostly idle)
@@ -817,8 +826,13 @@ final class Kit {
         guard let bytes = rec.svgBytes, rec.w > 0, rec.h > 0 else { return rec }   // raster image: skip
         let needMult = max(needDevW / Float(rec.w), needDevH / Float(rec.h))
         var mult: Int32 = 1
-        while Float(mult) < needMult && mult < 16 { mult <<= 1 }   // smallest pow2 >= need, capped
+        while Float(mult) < needMult && mult < 4 { mult <<= 1 }   // pow2 >= need, capped low: keeps re-raster cheap
         guard mult > rec.rasterMult else { return rec }            // already crisp enough
+        // Bound per-frame re-raster cost: hundreds of scaling particles crossing a bucket
+        // in ONE frame would otherwise stack their decode+VRAM-upload into a 20-30ms hitch.
+        // Spend a small budget and let the rest grow over the next frames (invisible).
+        guard reRasterBudget > 0 else { return rec }
+        reRasterBudget -= 1
         var tw: Int32 = 0, th: Int32 = 0, lw: Int32 = 0, lh: Int32 = 0
         let px = bytes.withUnsafeBufferPointer {
             kit_svg_decode_hi($0.baseAddress, Int32(bytes.count), mult, &tw, &th, &lw, &lh)
@@ -835,6 +849,41 @@ final class Kit {
         rec.rasterMult = mult
         images[Int(img)] = rec
         return rec
+    }
+
+    // runtime.js-style on-screen HUD: draws over the presented frame using SDL's
+    // built-in 8x8 debug font. Driven by dbg_set_overlays (bit0 = FPS+frame-ms line,
+    // bit1 = the img/txt/logic breakdown). Lets WasmCart be compared head-to-head with
+    // the browser's Canvas2D HUD.
+    func drawHUD() {
+        guard dbgOverlayFlags & 1 != 0, !hudLine1.isEmpty else { return }
+        let scale: Float = 3
+        let charW: Float = 8 * scale         // SDL debug font cell is 8px
+        let lineH: Float = 8 * scale + 4
+        let showAll = dbgOverlayFlags & 2 != 0
+        let nLines: Float = showAll ? 3 : 1
+        var maxChars = hudLine1.utf8.count
+        if showAll { maxChars = max(maxChars, max(hudLine2.utf8.count, hudLine3.utf8.count)) }
+        let boxW = Float(maxChars) * charW + 20
+        let boxH = nLines * lineH + 10
+        let bx = max(4, Float(screenW) - boxW - 12)   // bottom-right like the web HUD
+        let by = max(4, Float(screenH) - boxH - 12)
+        _ = SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND)
+        _ = SDL_SetRenderDrawColorFloat(renderer, 0, 0, 0, 0.6)
+        var bg = SDL_FRect(x: bx, y: by, w: boxW, h: boxH)
+        _ = SDL_RenderFillRect(renderer, &bg)
+        _ = SDL_SetRenderScale(renderer, scale, scale)
+        _ = SDL_SetRenderDrawColorFloat(renderer, 0.3, 1, 0.5, 1)   // green, like the web overlay
+        let tx = (bx + 10) / scale
+        var ty = (by + 5) / scale
+        hudLine1.withCString { _ = SDL_RenderDebugText(renderer, tx, ty, $0) }
+        if showAll {
+            ty += lineH / scale
+            hudLine2.withCString { _ = SDL_RenderDebugText(renderer, tx, ty, $0) }
+            ty += lineH / scale
+            hudLine3.withCString { _ = SDL_RenderDebugText(renderer, tx, ty, $0) }
+        }
+        _ = SDL_SetRenderScale(renderer, 1, 1)
     }
 
     func imageByName(_ name: String) -> Int32 {
@@ -1876,9 +1925,11 @@ func kitHostPump() -> Bool {
 
 func kitHostPresent() {
     let k = Kit.shared
+    k.reRasterBudget = 2   // refresh the per-frame SVG re-raster budget
     k.reapVoices()
     k.ttsReap()
     if let screen = k.screenTex {
+        k.drawHUD()                      // runtime.js-style FPS overlay, drawn onto the frame
         let _b0 = SDL_GetTicksNS()
         _ = SDL_SetRenderTarget(k.renderer, nil)
         _ = SDL_SetTextureBlendMode(screen, SDL_BLENDMODE_NONE)
@@ -2268,7 +2319,7 @@ func gfx_set_tint(_ r: Float, _ g: Float, _ b: Float, _ bf: Float) {
 func gfx_draw_image(_ img: Int32, _ sx: Float, _ sy: Float, _ sw: Float, _ sh: Float,
                     _ dx: Float, _ dy: Float, _ dw: Float, _ dh: Float, _ rgba: UInt32) {
     let k = Kit.shared
-    let _pt0 = SDL_GetTicksNS(); defer { k.profImgNs += SDL_GetTicksNS() - _pt0 }
+    let _pt0 = SDL_GetTicksNS(); defer { k.profImgNs += SDL_GetTicksNS() - _pt0 }; k.profImgCount += 1
     // consume the one-shot particle tint FIRST, before the missing-texture early return,
     // so an unloaded-texture draw can't strand it onto the next frame's first draw.
     let pt = k.partTint; k.partTint = nil
@@ -2427,7 +2478,7 @@ func gfx_set_text_baseline(_ mode: Int32) {
 func gfx_draw_text(_ font: Int32, _ utf8: UnsafePointer<CChar>?, _ len: Int32,
                    _ x: Float, _ y: Float, _ sizePx: Int32, _ rgba: UInt32, _ spacing: Float) {
     let k = Kit.shared
-    let _pt0 = SDL_GetTicksNS(); defer { k.profTxtNs += SDL_GetTicksNS() - _pt0 }
+    let _pt0 = SDL_GetTicksNS(); defer { k.profTxtNs += SDL_GetTicksNS() - _pt0 }; k.profTxtCount += 1
     guard let info = k.resolveFont(font) else { return }
     let cps = k.decodeUTF8(utf8, len)
     if cps.isEmpty { return }
