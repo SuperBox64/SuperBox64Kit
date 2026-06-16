@@ -4,14 +4,14 @@ public enum SKLabelHorizontalAlignmentMode { case center, left, right }
 public enum SKLabelVerticalAlignmentMode { case baseline, center, top, bottom }
 
 public final class SKLabelNode: SKNode {
-    var _text: String = "" { didSet { fontHandleNeedsRebind = true } }
+    var _text: String = "" { didSet { fontHandleNeedsRebind = true; _widthDirty = true } }
     // Apple's SKLabelNode.text is optional; back it with a non-optional _text so
     // the render path stays simple and the game's `if let l = label.text` /
     // `label.text? += "x"` compile.
     public var text: String? { get { _text } set { _text = newValue ?? "" } }
-    public var fontSize: CGFloat = 32
+    public var fontSize: CGFloat = 32 { didSet { if fontSize != oldValue { _widthDirty = true } } }
     public var fontColor: SKColor? = .white
-    public var fontName: String = "JetBrainsMono-Bold" { didSet { fontHandleNeedsRebind = true } }
+    public var fontName: String = "JetBrainsMono-Bold" { didSet { fontHandleNeedsRebind = true; _widthDirty = true } }
     public var horizontalAlignmentMode: SKLabelHorizontalAlignmentMode = .center
     public var verticalAlignmentMode: SKLabelVerticalAlignmentMode = .baseline
     public var numberOfLines: Int = 1
@@ -28,6 +28,32 @@ public final class SKLabelNode: SKNode {
     // before the font face has registered.
     private var cachedFontHandle: Int32 = 0
     private var fontHandleNeedsRebind: Bool = true
+
+    // Cached glyph-run width (txt_width). Static labels — every building/car/tree
+    // emoji and HUD string — never change text/font/size, so this measures ONCE and
+    // is reused, instead of the 2-3 txt_width calls per label per frame (measuredWidth
+    // + frame + draw) that made frame time scale with on-screen object count.
+    private var _cachedWidth: Int32 = 0
+    private var _widthDirty: Bool = true
+
+    private func rawWidth() -> Int32 {
+        if _widthDirty {
+            if _text.isEmpty {
+                _cachedWidth = 0
+                _widthDirty = false
+            } else {
+                let px = Int32(fontSize)
+                let font = resolvedFontHandle()
+                var w: Int32 = 0
+                withUTF8Ptr(_text) { p, n in w = txt_width(font, p, n, px, 0) }
+                // A zero width on non-empty text means the font face hasn't registered
+                // yet (async asset load); stay dirty and retry next frame so we never
+                // cache a stale 0 and mis-align the label.
+                if w > 0 { _cachedWidth = w; _widthDirty = false }
+            }
+        }
+        return _cachedWidth
+    }
 
     // Cull radius for the world pass: ~3× the font size comfortably covers a
     // single emoji glyph or short HUD run without a per-frame text measure.
@@ -118,48 +144,36 @@ public final class SKLabelNode: SKNode {
     // Public glyph-run width measurement so consumers can position a
     // sibling node (caret, divider, etc.) at the end of the text without
     // duplicating the txt_width call.
-    public func measuredWidth() -> CGFloat {
-        guard !_text.isEmpty else { return 0 }
-        let px = Int32(fontSize)
-        let font = resolvedFontHandle()
-        var w: Int32 = 0
-        withUTF8Ptr(_text) { p, n in w = txt_width(font, p, n, px, 0) }
-        return CGFloat(w)
-    }
+    public func measuredWidth() -> CGFloat { CGFloat(rawWidth()) }
 
     override func draw(alpha: CGFloat) {
         guard !_text.isEmpty, let c = fontColor else { return }
         let px = Int32(fontSize)
         let font = resolvedFontHandle()
+        let w = Float(rawWidth())   // cached: no per-frame re-measure
+        let x: Float
+        switch horizontalAlignmentMode {
+        case .center: x = -w / 2
+        case .left:   x = 0
+        case .right:  x = -w
+        }
+        // Let Canvas2D pick the textBaseline directly so the y anchor matches what
+        // each alignment mode means visually. Emojis don't sit dead centre in the
+        // em-box; textBaseline='middle' uses the actual glyph centre, which is what
+        // SpriteKit's .center alignment promises.
+        let baselineMode: Int32
+        switch verticalAlignmentMode {
+        case .baseline: baselineMode = 0       // alphabetic
+        case .center:   baselineMode = 1       // middle
+        case .top:      baselineMode = 2
+        case .bottom:   baselineMode = 3
+        }
         gfx_set_alpha(Float(alpha))
         gfx_save()
         gfx_scale(1, -1)  // un-flip: text must not be mirrored
-        withUTF8Ptr(_text) { p, n in
-            let w = Float(txt_width(font, p, n, px, 0))
-            let x: Float
-            switch horizontalAlignmentMode {
-            case .center: x = -w / 2
-            case .left:   x = 0
-            case .right:  x = -w
-            }
-            // Let Canvas2D pick the textBaseline directly so the y anchor
-            // matches what each alignment mode means visually. The legacy
-            // hand-rolled offsets (y = -s * 0.5, etc.) gave the right answer
-            // for the em-box's geometric centre but emojis don't sit dead
-            // centre in the em-box; setting textBaseline = 'middle' lets the
-            // canvas use the actual glyph centre, which is what SpriteKit's
-            // .center alignment promises.
-            let baselineMode: Int32
-            switch verticalAlignmentMode {
-            case .baseline: baselineMode = 0       // alphabetic
-            case .center:   baselineMode = 1       // middle
-            case .top:      baselineMode = 2
-            case .bottom:   baselineMode = 3
-            }
-            gfx_set_text_baseline(baselineMode)
-            gfx_draw_text(font, p, n, x, 0, px, c.rgba, 0)
-            gfx_set_text_baseline(2)               // restore default 'top'
-        }
+        gfx_set_text_baseline(baselineMode)
+        withUTF8Ptr(_text) { p, n in gfx_draw_text(font, p, n, x, 0, px, c.rgba, 0) }
+        gfx_set_text_baseline(2)               // restore default 'top'
         gfx_restore()
     }
 }

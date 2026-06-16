@@ -113,9 +113,11 @@ open class SKScene: SKNode {
         }
         for c in children where c !== skip { collect(c, 0, eff, 0, 0) }
         flat.sort { $0.z != $1.z ? $0.z < $1.z : $0.order < $1.order }
+        var chain: [SKNode] = []
+        chain.reserveCapacity(8)
         for item in flat {
             gfx_save()
-            var chain: [SKNode] = []
+            chain.removeAll(keepingCapacity: true)   // reuse across nodes: no per-node heap alloc
             var cur: SKNode? = item.node
             while let n = cur, n !== self { chain.append(n); cur = n.parent }
             for n in chain.reversed() {
