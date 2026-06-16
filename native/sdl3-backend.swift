@@ -826,7 +826,7 @@ final class Kit {
         guard let bytes = rec.svgBytes, rec.w > 0, rec.h > 0 else { return rec }   // raster image: skip
         let needMult = max(needDevW / Float(rec.w), needDevH / Float(rec.h))
         var mult: Int32 = 1
-        while Float(mult) < needMult && mult < 4 { mult <<= 1 }   // pow2 >= need, capped low: keeps re-raster cheap
+        while Float(mult) < needMult && mult < 8 { mult <<= 1 }   // pow2 >= display footprint (per-frame budget bounds the cost)
         guard mult > rec.rasterMult else { return rec }            // already crisp enough
         // Bound per-frame re-raster cost: hundreds of scaling particles crossing a bucket
         // in ONE frame would otherwise stack their decode+VRAM-upload into a 20-30ms hitch.
@@ -905,7 +905,19 @@ final class Kit {
         var logH: Int32 = 0
         var svgMult: Int32 = 0   // >0 once SVG-decoded: the intrinsic multiple this first raster used
         var pixels = data.withUnsafeBufferPointer { kit_png_decode($0.baseAddress, Int32(data.count), &w, &h) }
-        if pixels != nil { logW = w; logH = h }
+        if pixels != nil {
+            logW = w; logH = h
+            // A librsvg-rendered PNG sidecar for an SVG: resvg mis-renders some PDF-derived
+            // SVGs (the fire/hud diamond), so we ship a browser-correct hi-res PNG — but it
+            // must be SIZED like the SVG (its intrinsic units), not by the PNG's pixel count,
+            // or the sprite comes out N× too big. Probe the sibling SVG for the logical size.
+            if let svg = assetBytes("images/" + name + ".svg") ?? assetBytes(name + ".svg") {
+                var sw: Int32 = 0, sh: Int32 = 0, slw: Int32 = 0, slh: Int32 = 0
+                let sp = svg.withUnsafeBufferPointer { kit_svg_decode_hi($0.baseAddress, Int32(svg.count), 1, &sw, &sh, &slw, &slh) }
+                if let sp { kit_stb_free(sp) }
+                if slw > 0, slh > 0 { logW = slw; logH = slh }
+            }
+        }
         if pixels == nil {   // not PNG/JPEG — menu sprites, parallax + gameplay art are .svg
             // Supersample SVGs to the device scale so embedded detail survives instead of
             // rasterizing the tiny declared canvas and upscaling (the soft grass/dirt).
