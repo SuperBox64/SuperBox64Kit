@@ -1430,18 +1430,46 @@ final class Kit {
         if let id = soundNames[base] { return id }
         let id = Int32(soundSpecs.count)
         soundNames[base] = id
+        // Resolve like the web runtime's lookupSound(): match by STEM so the game can
+        // ask for ANY extension (.m4a/.mp3/.caf/.ogg/...) and still find whatever the
+        // cart actually ships for that name. Try the exact request FIRST (a cart that
+        // ships the requested file is unchanged — .wav games keep working), then the
+        // stem under the common audio extensions. The native decoder (SDL_LoadWAV)
+        // reads WAV; the cart pipeline emits WAV, but resolution is extension-agnostic.
+        var candidates = [base]
+        var stemBytes = Array(base.utf8)
+        var lastDot = -1
+        for k in 0..<stemBytes.count where stemBytes[k] == 46 { lastDot = k }
+        if lastDot > 0 {
+            stemBytes.removeSubrange(lastDot..<stemBytes.count)
+            stemBytes.append(0)
+            let stem = stemBytes.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+            for ext in [".wav", ".ogg", ".mp3", ".m4a", ".aac", ".caf", ".opus", ".flac"] {
+                let cand = stem + ext
+                if cand != base { candidates.append(cand) }
+            }
+        }
         var spec = SDL_AudioSpec()
         var buf: UnsafeMutablePointer<UInt8>? = nil
         var len: UInt32 = 0
-        // assets baked into the binary take priority; disk is the fallback
-        var memLen: UInt32 = 0
-        let mem = base.withCString { kit_asset_data($0, &memLen) }
-        if let mem, memLen > 0 {
-            let io = SDL_IOFromConstMem(mem, Int(memLen))
-            _ = SDL_LoadWAV_IO(io, true, &spec, &buf, &len)
-        } else {
-            let path = assetDir + "/" + base
-            _ = path.withCString { SDL_LoadWAV($0, &spec, &buf, &len) }
+        for cand in candidates {
+            // Route through assetBytes — cart zip (assetProvider, which tries assets/sfx/…)
+            // first, then baked-in, then disk — the SAME path images use. The old code
+            // called kit_asset_data directly (baked-only), so CART sounds (in the zip)
+            // never loaded: music + every sfx were silent in WasmCart.
+            if let bytes = assetBytes(cand) {
+                var ok = false
+                bytes.withUnsafeBufferPointer { bp in
+                    let io = SDL_IOFromConstMem(bp.baseAddress, bp.count)
+                    if SDL_LoadWAV_IO(io, true, &spec, &buf, &len), buf != nil { ok = true }
+                }
+                if ok { break }
+            }
+            let path = assetDir + "/" + cand
+            if path.withCString({ SDL_LoadWAV($0, &spec, &buf, &len) }), buf != nil { break }
+        }
+        if ("KIT_SND_DEBUG".withCString { SDL_getenv($0) }) != nil {
+            print("snd load: \(base) -> \(buf != nil ? "OK (\(len) bytes)" : "FAIL") via \(candidates)")
         }
         soundSpecs.append(spec)
         soundBufs.append(buf)
