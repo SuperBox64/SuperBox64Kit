@@ -359,6 +359,18 @@ open class SKNode {
     // measuring. 0 = never cull this node (containers/shapes always draw).
     var _cullExtent: CGFloat { 0 }
 
+    // OPT-IN action/tickSelf cull. When true AND the world cull rect is active AND
+    // this node's world AABB (absolutePosition ± _cullExtent, falling back to 64)
+    // is fully outside it, stepActions skips this node's action loop + tickSelf for
+    // the frame but STILL recurses children (onscreen children of an offscreen
+    // parent must step) and STILL runs constraints (position-critical, cheap).
+    // autoplayTick (audio) ran earlier so it is unaffected. The game sets this ONLY
+    // on world-space oscillating items, never on HUD/camera children, so the opt-in
+    // itself excludes the camera subtree — no per-frame parent-chain walk. Meteors
+    // /bad-guys/spawn-in motion do NOT set this; their one-shot moveTo+fade+remove
+    // keep running offscreen to bring them onscreen.
+    public var cullActionsWhenOffscreen: Bool = false
+
     func renderTree(parentAlpha: CGFloat, worldX: CGFloat = 0, worldY: CGFloat = 0) {
         if isHidden || alpha <= 0 { return }
         let eff = parentAlpha * alpha
@@ -421,6 +433,20 @@ open class SKNode {
         if let audio = self as? SKAudioNode { audio.autoplayTick() }
         if isPaused { return }                       // halt this subtree
         let scaled = dt * speed                      // SKNode.speed scales time per subtree
+        // Opt-in cull: a flagged node whose world AABB is entirely outside the
+        // active cull rect skips its action loop + tickSelf this frame. Children
+        // still recurse (line below) so onscreen descendants keep stepping;
+        // constraints are kept (position-critical). autoplayTick already ran.
+        if cullActionsWhenOffscreen, let cull = SKNode._cullRect {
+            let p = absolutePosition()
+            let ext = _cullExtent > 0 ? _cullExtent : 64
+            let r = CGRect(x: p.x - ext, y: p.y - ext, width: ext * 2, height: ext * 2)
+            if !r.intersects(cull) {
+                if let cs = constraints { for c in cs { c.apply(to: self) } }
+                for c in children { c.stepActions(scaled) }
+                return
+            }
+        }
         // Step every action ONCE this frame, including actions started mid-frame
         // by a .run block (e.g. WorkerController's chained tile move via
         // run(_:withKey:), which removeAll's the finishing action and appends a

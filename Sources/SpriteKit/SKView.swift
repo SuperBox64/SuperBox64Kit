@@ -153,6 +153,7 @@ public class SKView: UIView {
         KitRunLoop._tick(dt)
         _kitDrainAudioCompletions()
         guard let s = scene else { return }
+        SKNode._cullRect = computeCullRect(s)   // valid for stepActions this frame (cam 1 frame stale, masked by margin)
         let hadInput = pollEvents(s)
         s.stepActions(dt)
         SKAudioNode.reapDetached()
@@ -293,30 +294,35 @@ public class SKView: UIView {
         return CGPoint(x: CGFloat(x) - ax * w, y: h - ay * h - CGFloat(y))
     }
 
+    // World-space viewport rect for frustum culling. Computed once at the top of
+    // tick (so it's valid at stepActions time, using the previous frame's camera
+    // position — one frame of staleness, masked by the 256px margin) and re-applied
+    // idempotently by render(). Returns nil when shouldCullNonVisibleNodes is off.
+    private func computeCullRect(_ s: SKScene) -> CGRect? {
+        guard shouldCullNonVisibleNodes else { return nil }
+        let margin: CGFloat = 256
+        if let cam = s.camera {
+            let sx = cam.xScale == 0 ? 1 : abs(cam.xScale)
+            let sy = cam.yScale == 0 ? 1 : abs(cam.yScale)
+            let vw = s.size.width * sx, vh = s.size.height * sy
+            return CGRect(x: cam.position.x - vw/2 - margin,
+                          y: cam.position.y - vh/2 - margin,
+                          width: vw + margin*2, height: vh + margin*2)
+        } else {
+            return CGRect(x: -s.anchorPoint.x * s.size.width - margin,
+                          y: -s.anchorPoint.y * s.size.height - margin,
+                          width: s.size.width + margin*2,
+                          height: s.size.height + margin*2)
+        }
+    }
+
     private func render(_ s: SKScene) {
         gfx_clear(s.backgroundColor.rgba)
         let cam = s.camera
         // Viewport in WORLD coords for the world pass — drawable leaves fully
         // outside are skipped (frustum culling). Generous margin so nothing pops
         // at the edge. Cleared before the screen-fixed HUD pass below.
-        if shouldCullNonVisibleNodes {
-            let margin: CGFloat = 256
-            if let cam {
-                let sx = cam.xScale == 0 ? 1 : abs(cam.xScale)
-                let sy = cam.yScale == 0 ? 1 : abs(cam.yScale)
-                let vw = s.size.width * sx, vh = s.size.height * sy
-                SKNode._cullRect = CGRect(x: cam.position.x - vw/2 - margin,
-                                          y: cam.position.y - vh/2 - margin,
-                                          width: vw + margin*2, height: vh + margin*2)
-            } else {
-                SKNode._cullRect = CGRect(x: -s.anchorPoint.x*s.size.width - margin,
-                                          y: -s.anchorPoint.y*s.size.height - margin,
-                                          width: s.size.width + margin*2,
-                                          height: s.size.height + margin*2)
-            }
-        } else {
-            SKNode._cullRect = nil
-        }
+        SKNode._cullRect = computeCullRect(s)   // idempotent: same value tick already set
         // World pass: under the camera's inverse so the scene appears as if shot
         // through its lens (cam.position centred, scaled/rotated by the inverse),
         // but SKIP the camera node's own subtree — its children are screen-fixed

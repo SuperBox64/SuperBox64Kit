@@ -55,9 +55,10 @@ public final class SKLabelNode: SKNode {
         return _cachedWidth
     }
 
-    // Cull radius for the world pass: ~3× the font size comfortably covers a
-    // single emoji glyph or short HUD run without a per-frame text measure.
-    override var _cullExtent: CGFloat { fontSize * 3 }
+    // Cull half-extent for the world pass: ~3× the font size (scaled by the
+    // node's own scale) comfortably covers a single emoji glyph or short HUD
+    // run without a per-frame text measure. abs() for flip scales (-1).
+    override var _cullExtent: CGFloat { fontSize * 3 * max(abs(xScale), abs(yScale)) }
 
     public init(attributedText: String) {
         self._text = attributedText

@@ -317,17 +317,51 @@ public class SKEffectNode: SKNode {
     // Apple's default is TRUE — setting a filter is enough to get the effect
     // (UFO Emoji's tractor-beam glow relies on this: addGlow() sets only the
     // filter). The kit defaulted to false, so the beam rendered hard-edged.
-    public var shouldEnableEffects: Bool = true
-    public var shouldRasterize: Bool = false
+    public var shouldEnableEffects: Bool = true { didSet { _rasterDirty = true } }
+    public var shouldRasterize: Bool = false    { didSet { _rasterDirty = true } }
     public var shouldCenterFilter: Bool = false
     public var blendMode: SKBlendMode = .alpha
-    public var filter: AnyObject?              // CIFilter stand-in
+    public var filter: AnyObject? { didSet { _rasterDirty = true } }              // CIFilter stand-in
     public var shader: SKShader?
     // Convenience: a portable CSS-filter string honored by Canvas2D's
     // ctx.filter — e.g. "blur(8px) saturate(150%)". Games can set this
     // directly to get a real visual effect on web.
-    public var filterString: String?
+    public var filterString: String? { didSet { _rasterDirty = true } }
+    // shouldRasterize bake cache. When rasterized, the filtered offscreen is
+    // baked once and reused while bounds + filter stay stable — addGlow's
+    // tractor glow has a single static child, so the bake is permanent and we
+    // drop one offscreen_begin/CreateTexture/registerImage/free_image per
+    // frame. The cached image is in this node's local space, so it rides the
+    // node's transform (translate/rotate/scale in renderTree) with no re-bake
+    // on movement. _rasterDirty is set on filter/effect/rasterize changes
+    // (didSet above) and on child mutation (addChild/removeAllChildren below);
+    // the bounds + filter string are compared each frame too, so a moved or
+    // resized child forces a re-bake even without a hook. Freed in deinit so a
+    // respawned tractor can't leak one baked image per life. Caveat: a
+    // rasterized effect with an ANIMATED child (or a changing alpha) would go
+    // stale — no call site does this; addGlow's child is static and full-alpha.
+    private var _rasterHandle: Int32 = 0
+    private var _rasterW: Int = 0
+    private var _rasterH: Int = 0
+    private var _rasterOX: CGFloat = 0
+    private var _rasterOY: CGFloat = 0
+    private var _rasterFilterKey: String?
+    private var _rasterDirty: Bool = true
     public override init() { super.init() }
+    deinit { if _rasterHandle > 0 { gfx_free_image(_rasterHandle) } }
+
+    // Mark the raster cache stale when children change so a mutated subtree
+    // re-bakes instead of drawing a stale image. addGlow only adds its one
+    // static child at setup (before the first render), so these never fire for
+    // the glow — they future-proof other rasterized effects.
+    public override func addChild(_ node: SKNode) {
+        super.addChild(node)
+        _rasterDirty = true
+    }
+    public override func removeAllChildren() {
+        super.removeAllChildren()
+        _rasterDirty = true
+    }
 
     // CSS filter to apply to the children's rendered pixels. Honors an explicit
     // filterString first, else maps a blur-family CIFilter to a CSS blur so the
@@ -427,32 +461,66 @@ public class SKEffectNode: SKNode {
             let w = Int(bounds.width  + pad * 2)
             let h = Int(bounds.height + pad * 2)
             if w > 0 && h > 0 {
-                let handle = gfx_offscreen_begin(Int32(w), Int32(h))
-                // Apply the filter on the OFFSCREEN target. Canvas2D's
-                // save/restore preserves ctx.filter, so the children's own
-                // gfx_save / gfx_restore boundaries can't clobber it. Setting
-                // the filter on the main canvas after gfx_offscreen_end and
-                // hoping it survives drawImage is unreliable — multiple
-                // browsers reset ctx.filter on context switches and after
-                // certain composite ops.
-                withUTF8Ptr(f) { gfx_set_filter($0, $1) }
-                gfx_save()
-                gfx_translate(Float(-bounds.minX + pad), Float(-bounds.minY + pad))
-                for c in children.sorted(by: { $0.zPosition < $1.zPosition }) {
-                    c.renderTree(parentAlpha: eff)
-                }
-                gfx_restore()
-                gfx_clear_filter()
-                let img = gfx_offscreen_end_to_image(handle)
-                if img > 0 {
-                    // No filter on the back-blit — the offscreen already
-                    // contains the blurred pixels. -1, -1 source dims route
-                    // through gfx_draw_image's 5-arg form so we read the
-                    // full backing canvas (not just the top-left at dpr=2).
-                    gfx_draw_image(img, 0, 0, -1, -1,
-                                   Float(bounds.minX - pad), Float(bounds.minY - pad),
-                                   Float(w), Float(h), 0xFFFFFFFF)
-                    gfx_free_image(img)   // per-frame bake; release so this.images can't grow unbounded
+                // Back-blit origin (this node's local space) = bounds origin
+                // shifted by the pad. Cached for the cache-validity compare.
+                let ox = bounds.minX - pad, oy = bounds.minY - pad
+                // shouldRasterize: reuse the baked offscreen while the child
+                // bounds + filter string stay stable (the only call site —
+                // addGlow's tractor glow — has a single static child, so the
+                // bake is permanent and we drop one offscreen_begin /
+                // CreateTexture / registerImage / free_image per frame). The
+                // cached image lives in this node's local space, so it rides
+                // the node's transform with no re-bake on movement. Re-bake
+                // only when dirty (child/filter/effect/rasterize changed via
+                // the didSet + addChild/removeAllChildren hooks) or when the
+                // bounds or filter string change.
+                let cacheValid = shouldRasterize
+                    && _rasterHandle > 0
+                    && !_rasterDirty
+                    && _rasterW == w && _rasterH == h
+                    && _rasterOX == ox && _rasterOY == oy
+                    && _rasterFilterKey == f
+                if shouldRasterize, cacheValid {
+                    gfx_draw_image(_rasterHandle, 0, 0, -1, -1,
+                                   Float(ox), Float(oy), Float(w), Float(h), 0xFFFFFFFF)
+                } else {
+                    if _rasterHandle > 0 { gfx_free_image(_rasterHandle); _rasterHandle = 0 }
+                    let handle = gfx_offscreen_begin(Int32(w), Int32(h))
+                    // Apply the filter on the OFFSCREEN target. Canvas2D's
+                    // save/restore preserves ctx.filter, so the children's own
+                    // gfx_save / gfx_restore boundaries can't clobber it. Setting
+                    // the filter on the main canvas after gfx_offscreen_end and
+                    // hoping it survives drawImage is unreliable — multiple
+                    // browsers reset ctx.filter on context switches and after
+                    // certain composite ops.
+                    withUTF8Ptr(f) { gfx_set_filter($0, $1) }
+                    gfx_save()
+                    gfx_translate(Float(-bounds.minX + pad), Float(-bounds.minY + pad))
+                    for c in children.sorted(by: { $0.zPosition < $1.zPosition }) {
+                        c.renderTree(parentAlpha: eff)
+                    }
+                    gfx_restore()
+                    gfx_clear_filter()
+                    let img = gfx_offscreen_end_to_image(handle)
+                    if img > 0 {
+                        // No filter on the back-blit — the offscreen already
+                        // contains the blurred pixels. -1, -1 source dims route
+                        // through gfx_draw_image's 5-arg form so we read the
+                        // full backing canvas (not just the top-left at dpr=2).
+                        gfx_draw_image(img, 0, 0, -1, -1,
+                                       Float(ox), Float(oy), Float(w), Float(h), 0xFFFFFFFF)
+                        if shouldRasterize {
+                            // Cache the bake for reuse on subsequent frames;
+                            // freed on the next re-bake or in deinit.
+                            _rasterHandle = img
+                            _rasterW = w; _rasterH = h
+                            _rasterOX = ox; _rasterOY = oy
+                            _rasterFilterKey = f
+                            _rasterDirty = false
+                        } else {
+                            gfx_free_image(img)   // per-frame bake; release so this.images can't grow unbounded
+                        }
+                    }
                 }
             }
         } else {

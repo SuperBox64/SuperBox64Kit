@@ -89,6 +89,10 @@ public final class SKEmitterNode: SKNode {
         var blendFactor: CGFloat
     }
     private var particles: [Particle] = []
+    // Hard cap on simultaneously-live particles per emitter: bounds the per-frame tick
+    // + per-particle draw-FFI cost so dense effects (fire/explosions/aura) can't tank
+    // the frame. Dense fire floats ~600; 256 is visually indistinguishable here.
+    public var maxLiveParticles: Int = 256
     private var emitAccum: CGFloat = 0
     private var emittedSoFar = 0
 
@@ -137,6 +141,22 @@ public final class SKEmitterNode: SKNode {
     }
 
     public override func tickSelf(_ dt: TimeInterval) {
+        // Universal particle-sim cull. Emitters don't move via SKActions, so
+        // culling the sim is always safe: particles only matter where drawn, and
+        // the draw is already culled by _cullExtent. When the world cull rect is
+        // active and this emitter's spread is entirely outside it, skip integrate
+        // + spawn for the frame. _cullRect is nil during the HUD pass and offscreen
+        // bakes (saved+nil'd) — then we run normally. Reuse _cullExtent (already
+        // computed from speed*lifetime + spread + quad) so the sim cull matches the
+        // draw cull. absolutePosition() and _cullRect are both y-up world space.
+        if let cull = SKNode._cullRect {
+            let ext = _cullExtent
+            if ext > 0 {
+                let p = absolutePosition()
+                let r = CGRect(x: p.x - ext, y: p.y - ext, width: ext * 2, height: ext * 2)
+                if !r.intersects(cull) { return }
+            }
+        }
         let d = CGFloat(dt)
         // age + integrate (reverse iterate for safe in-place removal)
         var i = particles.count - 1
@@ -144,7 +164,8 @@ public final class SKEmitterNode: SKNode {
             particles[i].age += d
             let p = particles[i]
             if p.age >= p.life {
-                particles.remove(at: i)
+                particles[i] = particles[particles.count - 1]   // swap-remove: O(1), no O(n) array shift
+                particles.removeLast()
                 i -= 1
                 continue
             }
@@ -192,6 +213,7 @@ public final class SKEmitterNode: SKNode {
             emitAccum += particleBirthRate * d
             while emitAccum >= 1 {
                 emitAccum -= 1
+                if particles.count >= maxLiveParticles { emitAccum = 0; break }   // cap live particles
                 emitOne()
                 emittedSoFar += 1
                 if numParticlesToEmit > 0 && emittedSoFar >= numParticlesToEmit { break }

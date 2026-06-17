@@ -22,9 +22,13 @@ public final class SKSpriteNode: SKNode {
     public var warpGeometry: SKWarpGeometry?
     public var subdivisionLevels: Int = 0
 
-    // Cull radius for the world pass: the sprite's larger dimension (full, not
-    // half — generous so a sprite never pops at the viewport edge).
-    override var _cullExtent: CGFloat { size.width > size.height ? size.width : size.height }
+    // Cull half-extent for the world pass: half the larger SCALED dimension. The
+    // cull test builds a ±ext AABB (2*ext = full visual footprint), and the
+    // viewport rect carries a 256px margin so an exact-bound sprite at the edge
+    // still isn't culled (no popping). abs() for flip scales (-1). Previously this
+    // ignored scale, so only the 2x parallax background happened to cull right;
+    // other scales popped (>2) or over-drew offscreen (<2).
+    override var _cullExtent: CGFloat { max(size.width * abs(xScale), size.height * abs(yScale)) / 2 }
 
     public init(color: SKColor, size: CGSize) {
         self.color = color
