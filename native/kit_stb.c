@@ -27,45 +27,56 @@ unsigned char* kit_png_decode(const unsigned char* bytes, int len, int* w, int* 
    - nanosvg (default): minimal vector-path rasterizer. Fine for pure-vector SVGs;
      keeps games that don't link libresvg building unchanged. */
 #include <string.h>
-#ifdef KIT_USE_RESVG
-#include "resvg.h"
+#ifdef KIT_USE_THORVG
+#include "thorvg_capi.h"
 /* Supersampled SVG raster. ss = device scale (e.g. 3 on a 1920px window of a 626px
    logical game). texW/texH = the ss-times pixel buffer that becomes the SDL texture;
    logW/logH = the SVG's intrinsic size. The host samples the hi-res texture through
    normalized UVs that use the LOGICAL size, so sprites are crisp at the screen
    resolution instead of upscaling a tiny declared-canvas raster (the soft grass/dirt).
-   resvg renders at any size, so this is the same 1:1-with-screen trick canvas2d does. */
+   ThorVG renders at any size (tvg_picture_set_size), so this is the same
+   1:1-with-screen trick canvas2d does. */
+/* ThorVG's engine is process-global: the thread count is fixed on the first call and
+   later calls are no-ops. Sprite decode runs at load time (not per-frame), so a small
+   thread pool + the SIMD SW raster is plenty. */
+static void kit_tvg_init(void) {
+    static int inited = 0;
+    if (!inited) { tvg_engine_init(2); inited = 1; }
+}
 unsigned char* kit_svg_decode_hi(const unsigned char* bytes, int len, int ss,
                                  int* texW, int* texH, int* logW, int* logH) {
     if (ss < 1) ss = 1;
-    resvg_options* opt = resvg_options_create();
-    resvg_render_tree* tree = 0;
-    int32_t err = resvg_parse_tree_from_data((const char*)bytes, (uintptr_t)len, opt, &tree);
-    resvg_options_destroy(opt);
-    if (err != RESVG_OK || !tree) return 0;
-    resvg_size sz = resvg_get_image_size(tree);
-    int iw = (int)(sz.width + 0.5f), ih = (int)(sz.height + 0.5f);
-    if (iw < 1 || ih < 1) { resvg_tree_destroy(tree); return 0; }
+    kit_tvg_init();
+    Tvg_Paint pic = tvg_picture_new();
+    if (!pic) return 0;
+    /* load from the in-memory SVG bytes (the cart ships SVGs as data, not files).
+       copy=1 so ThorVG owns its own buffer; rpath=NULL (no external image refs --
+       the cart SVGs embed base64 PNGs inline). */
+    if (tvg_picture_load_data(pic, (const char*)bytes, (uint32_t)len, "svg", 0, 1) != TVG_RESULT_SUCCESS) {
+        tvg_paint_unref(pic, 1);   /* never added to a canvas: free directly */
+        return 0;
+    }
+    float fw = 0, fh = 0;
+    tvg_picture_get_size(pic, &fw, &fh);
+    int iw = (int)(fw + 0.5f), ih = (int)(fh + 0.5f);
+    if (iw < 1 || ih < 1) { tvg_paint_unref(pic, 1); return 0; }
     int tw = iw * ss, th = ih * ss;
     while (ss > 1 && (long)tw * th > 64L * 1024 * 1024) { ss--; tw = iw * ss; th = ih * ss; }
-    if ((long)tw * th > 64L * 1024 * 1024) { resvg_tree_destroy(tree); return 0; }
+    if ((long)tw * th > 64L * 1024 * 1024) { tvg_paint_unref(pic, 1); return 0; }
     unsigned char* px = (unsigned char*)calloc((size_t)tw * th, 4);
-    if (!px) { resvg_tree_destroy(tree); return 0; }
-    resvg_transform ts = resvg_transform_identity();
-    ts.a = (float)ss; ts.d = (float)ss;   /* scale the SVG up into the ss-times buffer */
-    resvg_render(tree, ts, (uint32_t)tw, (uint32_t)th, (char*)px);
-    resvg_tree_destroy(tree);
-    /* resvg emits PREMULTIPLIED RGBA8888; un-premultiply to straight alpha so the
-       host's SDL_BLENDMODE_BLEND + tint path stays correct and edges don't darken. */
-    for (long i = 0, n = (long)tw * th; i < n; i++) {
-        unsigned char a = px[i * 4 + 3];
-        if (a != 0 && a != 255) {
-            for (int c = 0; c < 3; c++) {
-                int v = (px[i * 4 + c] * 255 + a / 2) / a;
-                px[i * 4 + c] = (unsigned char)(v > 255 ? 255 : v);
-            }
-        }
-    }
+    if (!px) { tvg_paint_unref(pic, 1); return 0; }
+    Tvg_Canvas canvas = tvg_swcanvas_create(TVG_ENGINE_OPTION_DEFAULT);
+    if (!canvas) { tvg_paint_unref(pic, 1); free(px); return 0; }
+    /* ABGR8888S = un-alpha-premultiplied, memory R,G,B,A == SDL_PIXELFORMAT_ABGR8888
+       the host uses (sdl3-backend). ThorVG writes straight alpha directly, so unlike
+       resvg no un-premultiply pass is needed (edges don't darken under BLEND tint). */
+    tvg_swcanvas_set_target(canvas, (uint32_t*)px, (uint32_t)tw, (uint32_t)tw, (uint32_t)th, TVG_COLORSPACE_ABGR8888S);
+    tvg_picture_set_size(pic, (float)tw, (float)th);   /* scale the SVG up into the ss-times buffer */
+    tvg_canvas_add(canvas, pic);
+    tvg_canvas_draw(canvas, 1);
+    tvg_canvas_sync(canvas);
+    tvg_canvas_remove(canvas, pic);   /* canvas owns pic; remove releases+frees it */
+    tvg_canvas_destroy(canvas);
     *texW = tw; *texH = th; *logW = iw; *logH = ih;
     return px;
 }

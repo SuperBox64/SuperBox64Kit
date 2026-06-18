@@ -109,7 +109,11 @@ public final class SKEmitterNode: SKNode {
                            particleScale + particleScaleRange / 2,
                            particleScale + particleScaleSpeed * particleLifetime)
         let quad = max(particleSize.width, particleSize.height) * max(1, maxScale)
-        return travel + spread + quad + 32
+        // Scale the particle-space extent by the emitter node's own scale, like
+        // SKSpriteNode/SKLabelNode do — else a setScale(0.334) emitter (the
+        // blackHole/level-up marker) gets a cull box ~3× its real footprint and
+        // ticks+draws far off the screen where it's actually visible.
+        return (travel + spread + quad) * max(abs(xScale), abs(yScale)) + 32
     }
 
     public override init() { super.init() }

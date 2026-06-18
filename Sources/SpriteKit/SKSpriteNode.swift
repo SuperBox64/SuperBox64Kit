@@ -113,6 +113,21 @@ public final class SKSpriteNode: SKNode {
         let w = Float(size.width), h = Float(size.height)
         let ax = Float(anchorPoint.x), ay = Float(anchorPoint.y)
         gfx_set_alpha(Float(alpha))
+        // Assert THIS sprite's blend mode every draw, and reset after. Without this a
+        // sprite inherits whatever blend a previously-drawn SKEmitterNode left set — so
+        // a HUD sprite (e.g. the fire-button quarters) drawn while a .screen emitter
+        // (white-hole/level-up) is on screen would render through the screen/premultiplied
+        // path and vanish. alpha (the default) maps to 0 = normal blending, which also
+        // clears any leaked screen/additive state. add=1, multiply=2, screen=3.
+        let blendArg: Int32
+        switch blendMode {
+        case .add:      blendArg = 1
+        case .multiply: blendArg = 2
+        case .screen:   blendArg = 3
+        default:        blendArg = 0
+        }
+        gfx_set_blend(blendArg)
+        defer { gfx_set_blend(0) }
         // Re-resolve a deferred-name texture each frame until the runtime
         // registers it. This handles the boot()-before-preload-finishes race:
         // SKSpriteNodes built during the first frame may hold a handle of 0

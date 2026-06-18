@@ -1467,6 +1467,36 @@ extension Kit {
         return entry
     }
 
+    // A premultiplied (rgb *= a) copy of an image's base pixels, cached, with LINEAR
+    // scaling. The SCREEN blend (gfx_set_blend(3)) draws THIS instead of the straight-
+    // alpha texture: with ONE_MINUS_SRC_COLOR a straight-alpha texel keeps full RGB at
+    // its transparent edge (hard disc/ring that never fades to zero), but a
+    // premultiplied texel's RGB -> 0 as alpha -> 0, so screen contributes nothing there
+    // — the soft fade-to-zero bloom Apple SpriteKit / Canvas produce. SDL bilinear-
+    // upscales this small texture to the particle footprint, exactly like Canvas
+    // drawImage from the 22px source (no blocky re-raster, no rings).
+    func premultipliedTex(_ img: Int32) -> UnsafeMutablePointer<SDL_Texture>? {
+        if let cached = premultTex[img] { return cached }
+        guard let cp = cpuPixelsFor(img) else { premultTex[img] = .some(nil); return nil }
+        var px = cp.px
+        var i = 0
+        while i + 3 < px.count {
+            let a = Int(px[i + 3])
+            px[i]     = UInt8(Int(px[i])     * a / 255)
+            px[i + 1] = UInt8(Int(px[i + 1]) * a / 255)
+            px[i + 2] = UInt8(Int(px[i + 2]) * a / 255)
+            i += 4
+        }
+        let tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, cp.w, cp.h)
+        px.withUnsafeMutableBytes { raw in
+            var rect = SDL_Rect(x: 0, y: 0, w: cp.w, h: cp.h)
+            _ = SDL_UpdateTexture(tex, &rect, raw.baseAddress, cp.w * 4)
+        }
+        _ = SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_LINEAR)
+        premultTex[img] = .some(tex)
+        return tex
+    }
+
     func shaderPass(_ prog: ShProgram, _ srcImg: Int32, _ dx: Float, _ dy: Float, _ dw: Float, _ dh: Float, _ time: Float, _ rgba: UInt32) {
         guard dw > 0.5, dh > 0.5, let main = prog.run else { return }
         if !prog.samplerImgs.isEmpty { prog.samplerImgs[0] = srcImg }

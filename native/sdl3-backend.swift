@@ -129,6 +129,11 @@ final class Kit {
     var nextVoice: Int32 = 1
     var additive = false
     var composite: Int32 = 0
+    // SKBlendMode.screen path: blendOverride selects the screen blend and premulSource
+    // premultiplies src.rgb by its alpha so faded particles screen softly (alpha-aware
+    // W3C screen: Cb + αs·Cs·(1-Cb)). Set by gfx_set_blend(3); cleared by gfx_set_blend(0).
+    var blendOverride: SDL_BlendMode? = nil
+    var premulSource = false
     var deadTextures: [UnsafeMutablePointer<SDL_Texture>] = []
 
     var gamepads: [OpaquePointer?] = [nil, nil, nil, nil]
@@ -171,6 +176,10 @@ final class Kit {
     var ttsPreferredVoice = ""
     var shaderProgs: [ShProgram?] = [nil]
     var cpuPixels: [Int32: (w: Int32, h: Int32, px: [UInt8])] = [:]
+    // Premultiplied (rgb*=a) copy of a texture, cached per image. The SCREEN blend
+    // path draws this instead of the straight-alpha texture so the screen fades to
+    // zero at the texel's transparent edges (matches Apple SpriteKit / Canvas).
+    var premultTex: [Int32: UnsafeMutablePointer<SDL_Texture>?] = [:]
     var lightingShaderId: Int32 = -1
     var lightingState: Int32 = 0
     var shadowBlur: Float = 0
@@ -193,6 +202,7 @@ final class Kit {
         SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD)
 
     func currentBlend() -> SDL_BlendMode {
+        if let b = blendOverride { return b }
         if additive { return SDL_BLENDMODE_ADD }
         switch composite {
         case 1: return blendDestIn
@@ -2025,7 +2035,15 @@ func gfx_scale(_ sx: Float, _ sy: Float) {
 func gfx_set_alpha(_ a: Float) { Kit.shared.alpha = a }
 
 @_cdecl("gfx_set_blend")
-func gfx_set_blend(_ mode: Int32) { Kit.shared.additive = mode == 1 }
+func gfx_set_blend(_ mode: Int32) {
+    // SKEmitterNode/SKShapeNode blend arg: 1 = add, 2 = multiply, 3 = screen.
+    // screen → the screen blend with a premultiplied source (premulSource) so faded
+    // particles screen softly. add stays additive; everything else = normal alpha.
+    let k = Kit.shared
+    k.additive = (mode == 1)
+    k.premulSource = (mode == 3)
+    k.blendOverride = (mode == 3) ? k.blendScreen : (mode == 2 ? SDL_BLENDMODE_MUL : nil)
+}
 
 @_cdecl("gfx_stroke_poly")
 func gfx_stroke_poly(_ xy: UnsafePointer<Float>?, _ n: Int32, _ closed: Int32, _ t: Float, _ rgba: UInt32) {
@@ -2336,6 +2354,24 @@ func gfx_draw_image(_ img: Int32, _ sx: Float, _ sy: Float, _ sw: Float, _ sh: F
     // so an unloaded-texture draw can't strand it onto the next frame's first draw.
     let pt = k.partTint; k.partTint = nil
     guard img > 0, Int(img) < k.images.count, let rec0 = k.images[Int(img)], rec0.tex != nil else { return }
+    // SCREEN blend path (premulSource set by gfx_set_blend(3)): draw a PREMULTIPLIED
+    // copy of the texture, SDL bilinear-upscaled straight to the footprint — matching
+    // Apple SpriteKit / Canvas. Premultiplied source makes the screen fade softly to
+    // zero at the texel's transparent edges (no hard disc/ring), and the linear upscale
+    // of the small source is smooth (no blocky re-raster). Per-particle alpha (color.a)
+    // is folded in by premultiplying the vertex colour below.
+    if k.premulSource, let pmt = k.premultipliedTex(img) {
+        let a = Float(rgba & 0xFF) / 255 * k.alpha
+        var color = SDL_FColor(r: 1, g: 1, b: 1, a: a)
+        if let pt = pt {
+            color.r = 1 - pt.bf + pt.r * pt.bf
+            color.g = 1 - pt.bf + pt.g * pt.bf
+            color.b = 1 - pt.bf + pt.b * pt.bf
+        }
+        color.r *= color.a; color.g *= color.a; color.b *= color.a
+        k.drawTexturedQuad(pmt, dx, dy, dw, dh, 0, 0, 1, 1, color)
+        return
+    }
     // Vector sprites re-rasterize at their live device footprint so scaling never blurs.
     let rec: Kit.ImgRec
     if rec0.svgBytes != nil {
@@ -2373,6 +2409,8 @@ func gfx_free_image(_ img: Int32) {
     k.images[Int(img)] = nil
     k.freeImageSlots.append(Int(img))
     k.cpuPixels.removeValue(forKey: img)
+    if let pmt = k.premultTex[img], let t = pmt { SDL_DestroyTexture(t) }
+    k.premultTex.removeValue(forKey: img)
 }
 
 @_cdecl("gfx_upload_pixels")
@@ -2387,6 +2425,8 @@ func gfx_upload_pixels(_ img: Int32, _ w: Int32, _ h: Int32, _ rgba: UnsafePoint
         k.retireTexture(k.images[Int(img)]?.tex)
         k.images[Int(img)] = Kit.ImgRec(tex: tex, w: w, h: h)
         k.cpuPixels.removeValue(forKey: img)
+    if let pmt = k.premultTex[img], let t = pmt { SDL_DestroyTexture(t) }
+    k.premultTex.removeValue(forKey: img)
         return img
     }
     return k.registerImage(Kit.ImgRec(tex: tex, w: w, h: h))

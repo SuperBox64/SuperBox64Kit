@@ -93,9 +93,14 @@ open class SKScene: SKNode {
         // (skipping the camera subtree — the screen-fixed HUD pass), sort by
         // accumulated z with a stable tree-order tie-break, draw each node's OWN
         // content at its absolute transform.
-        var flat: [(node: SKNode, z: CGFloat, a: CGFloat, order: Int)] = []
+        // (wx,wy) = node's accumulated world position; clean = NO proper ancestor
+        // rotates/scales, so the whole ancestor chain composes to a single
+        // translate(wx,wy) and we skip the per-ancestor gfx_translate crossings
+        // (the interpreter-dominant cost). Rotated/scaled ancestors take the
+        // byte-identical full chain walk below.
+        var flat: [(node: SKNode, z: CGFloat, a: CGFloat, order: Int, wx: CGFloat, wy: CGFloat, clean: Bool)] = []
         var counter = 0
-        func collect(_ n: SKNode, _ accZ: CGFloat, _ accA: CGFloat, _ wx: CGFloat, _ wy: CGFloat) {
+        func collect(_ n: SKNode, _ accZ: CGFloat, _ accA: CGFloat, _ wx: CGFloat, _ wy: CGFloat, _ ancClean: Bool) {
             if n === skip || n.isHidden || n.alpha <= 0 { return }
             let z = accZ + n.zPosition
             let a = accA * n.alpha
@@ -108,24 +113,34 @@ open class SKScene: SKNode {
                     if !r.intersects(cull) { visible = false }
                 }
             }
-            if visible { flat.append((n, z, a, counter)); counter += 1 }
-            for c in n.children { collect(c, z, a, nx, ny) }
+            if visible { flat.append((n, z, a, counter, nx, ny, ancClean)); counter += 1 }
+            let childClean = ancClean && n.zRotation == 0 && n.xScale == 1 && n.yScale == 1
+            for c in n.children { collect(c, z, a, nx, ny, childClean) }
         }
-        for c in children where c !== skip { collect(c, 0, eff, 0, 0) }
+        for c in children where c !== skip { collect(c, 0, eff, 0, 0, true) }
         flat.sort { $0.z != $1.z ? $0.z < $1.z : $0.order < $1.order }
         var chain: [SKNode] = []
         chain.reserveCapacity(8)
         for item in flat {
+            let n0 = item.node
             gfx_save()
-            chain.removeAll(keepingCapacity: true)   // reuse across nodes: no per-node heap alloc
-            var cur: SKNode? = item.node
-            while let n = cur, n !== self { chain.append(n); cur = n.parent }
-            for n in chain.reversed() {
-                gfx_translate(Float(n.position.x), Float(n.position.y))
-                if n.zRotation != 0 { gfx_rotate(Float(n.zRotation * 180.0 / Double.pi)) }
-                if n.xScale != 1 || n.yScale != 1 { gfx_scale(Float(n.xScale), Float(n.yScale)) }
+            if item.clean {
+                // fast path: ancestors are translate-only -> one translate, then
+                // the leaf's own rotation/scale. Same final transform as the chain.
+                gfx_translate(Float(item.wx), Float(item.wy))
+                if n0.zRotation != 0 { gfx_rotate(Float(n0.zRotation * 180.0 / Double.pi)) }
+                if n0.xScale != 1 || n0.yScale != 1 { gfx_scale(Float(n0.xScale), Float(n0.yScale)) }
+            } else {
+                chain.removeAll(keepingCapacity: true)   // reuse across nodes: no per-node heap alloc
+                var cur: SKNode? = n0
+                while let n = cur, n !== self { chain.append(n); cur = n.parent }
+                for n in chain.reversed() {
+                    gfx_translate(Float(n.position.x), Float(n.position.y))
+                    if n.zRotation != 0 { gfx_rotate(Float(n.zRotation * 180.0 / Double.pi)) }
+                    if n.xScale != 1 || n.yScale != 1 { gfx_scale(Float(n.xScale), Float(n.yScale)) }
+                }
             }
-            item.node.draw(alpha: item.a)
+            n0.draw(alpha: item.a)
             gfx_restore()
         }
     }
