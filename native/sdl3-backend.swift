@@ -2401,6 +2401,54 @@ func gfx_draw_image(_ img: Int32, _ sx: Float, _ sy: Float, _ sw: Float, _ sh: F
     k.drawTexturedQuad(rec.tex, dx, dy, dw, dh, u0, v0, u1, v1, color)
 }
 
+// Batched single-sprite draw: ONE wasm->native FFI crossing replaces the per-node
+// gfx_save/translate/rotate/scale wrapper + SKSpriteNode's set_alpha/set_blend/save/
+// scale/draw_image/restore (~9 crossings). The body just calls those SAME native
+// functions internally (Swift->Swift, not FFI), so the rendered output is byte-
+// identical; only the crossing count drops. blend is scoped per-call (no leaked state).
+@_cdecl("gfx_draw_sprite")
+func gfx_draw_sprite(_ img: Int32, _ px: Float, _ py: Float, _ rotDeg: Float,
+                     _ sx: Float, _ sy: Float, _ ax: Float, _ ay: Float,
+                     _ w: Float, _ h: Float, _ alpha: Float, _ blend: Int32, _ rgba: UInt32) {
+    let k = Kit.shared
+    gfx_save()
+    defer { gfx_restore() }
+    gfx_translate(px, py)
+    if rotDeg != 0 { gfx_rotate(rotDeg) }
+    if sx != 1 || sy != 1 { gfx_scale(sx, sy) }
+    gfx_scale(1, -1)                       // SKSpriteNode's y-unflip
+    let savedAlpha = k.alpha
+    k.alpha = alpha
+    defer { k.alpha = savedAlpha }
+    gfx_set_blend(blend)
+    defer { gfx_set_blend(0) }
+    gfx_draw_image(img, 0, 0, -1, -1, -w * ax, -h * (1 - ay), w, h, rgba)
+}
+
+// Batched label/emoji draw: ONE FFI crossing for the per-node transform + SKLabelNode's
+// set_alpha/save/scale/set_text_baseline/draw_text/restore sequence. Body calls the same
+// native functions internally (no FFI) → byte-identical output. The busy scene is
+// emoji-label-dominated, so this is the largest crossing-count win.
+@_cdecl("gfx_draw_text_xform")
+func gfx_draw_text_xform(_ font: Int32, _ utf8: UnsafePointer<CChar>?, _ len: Int32,
+                         _ pxw: Float, _ pyw: Float, _ rotDeg: Float, _ sx: Float, _ sy: Float,
+                         _ localX: Float, _ sizePx: Int32, _ baseline: Int32,
+                         _ alpha: Float, _ rgba: UInt32, _ spacing: Float) {
+    let k = Kit.shared
+    gfx_save()
+    defer { gfx_restore() }
+    gfx_translate(pxw, pyw)
+    if rotDeg != 0 { gfx_rotate(rotDeg) }
+    if sx != 1 || sy != 1 { gfx_scale(sx, sy) }
+    gfx_scale(1, -1)                       // un-flip: text must not be mirrored
+    let savedAlpha = k.alpha
+    k.alpha = alpha
+    defer { k.alpha = savedAlpha }
+    gfx_set_text_baseline(baseline)
+    gfx_draw_text(font, utf8, len, localX, 0, sizePx, rgba, spacing)
+    gfx_set_text_baseline(2)               // restore default 'top'
+}
+
 @_cdecl("gfx_free_image")
 func gfx_free_image(_ img: Int32) {
     let k = Kit.shared

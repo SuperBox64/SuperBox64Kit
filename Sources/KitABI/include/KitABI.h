@@ -36,9 +36,21 @@ WABI void gfx_fill_poly(const float* xy, int n, uint32_t rgba);
 WABI void gfx_stroke_poly(const float* xy, int n, int closed, float t, uint32_t rgba);
 WABI void gfx_draw_image(int img, float sx, float sy, float sw, float sh,
                          float dx, float dy, float dw, float dh, uint32_t rgba);
+/* Batched single-sprite draw: folds the per-node transform + SKSpriteNode's
+   set_alpha/set_blend/save/scale/draw/restore into ONE FFI crossing. blend:
+   0=alpha,1=add,2=multiply,3=screen. (px,py)=world pos, (ax,ay)=anchor. */
+WABI void gfx_draw_sprite(int img, float px, float py, float rotDeg,
+                          float sx, float sy, float ax, float ay,
+                          float w, float h, float alpha, int blend, uint32_t rgba);
 WABI int  txt_width(int font, const char* utf8, int len, int sizePx, float spacing);
 WABI void gfx_draw_text(int font, const char* utf8, int len, float x, float y,
                         int sizePx, uint32_t rgba, float spacing);
+/* Batched label draw: folds the per-node transform + SKLabelNode's set_alpha/save/
+   scale/set_text_baseline/draw_text/restore into ONE FFI crossing. */
+WABI void gfx_draw_text_xform(int font, const char* utf8, int len,
+                              float pxw, float pyw, float rotDeg, float sx, float sy,
+                              float localX, int sizePx, int baseline,
+                              float alpha, uint32_t rgba, float spacing);
 WABI void gfx_set_text_baseline(int mode);
 WABI int  img_by_name(const char* name, int len);
 WABI int  img_width(int img);

@@ -109,6 +109,26 @@ public final class SKSpriteNode: SKNode {
                width: size.width, height: size.height)
     }
 
+    // Fast-path args for the batched gfx_draw_sprite (SKScene.renderWorld). Returns nil
+    // when this sprite needs the full chained draw (shader/lighting/warp/9-slice/atlas
+    // sub-rect) — those keep the exact existing path. Plain quads (the common case:
+    // buildings, terrain, actors) take ONE FFI crossing instead of ~9.
+    func batchedSpriteArgs() -> (handle: Int32, w: Float, h: Float, ax: Float, ay: Float, blend: Int32, tint: UInt32)? {
+        texture?.resolvePending()
+        guard let t = texture, t.handle != 0, shader == nil, lightingBitMask == 0,
+              warpGeometry == nil, centerRect == .zero, t.sourceRect == .zero else { return nil }
+        let blendArg: Int32
+        switch blendMode {
+        case .add:      blendArg = 1
+        case .multiply: blendArg = 2
+        case .screen:   blendArg = 3
+        default:        blendArg = 0
+        }
+        let tint = colorBlendFactor <= 0.001 ? (color.rgba | 0xFF) : color.rgba
+        return (t.handle, Float(size.width), Float(size.height),
+                Float(anchorPoint.x), Float(anchorPoint.y), blendArg, tint)
+    }
+
     override func draw(alpha: CGFloat) {
         let w = Float(size.width), h = Float(size.height)
         let ax = Float(anchorPoint.x), ay = Float(anchorPoint.y)
@@ -126,8 +146,11 @@ public final class SKSpriteNode: SKNode {
         case .screen:   blendArg = 3
         default:        blendArg = 0
         }
+        // One call for the common (.alpha) sprite: gfx_set_blend(0) clears any blend
+        // state a prior emitter left set (the fire-button leak guard). Only non-default
+        // blends pay the second call to reset afterwards.
         gfx_set_blend(blendArg)
-        defer { gfx_set_blend(0) }
+        defer { if blendArg != 0 { gfx_set_blend(0) } }
         // Re-resolve a deferred-name texture each frame until the runtime
         // registers it. This handles the boot()-before-preload-finishes race:
         // SKSpriteNodes built during the first frame may hold a handle of 0

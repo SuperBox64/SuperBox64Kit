@@ -177,6 +177,32 @@ public final class SKLabelNode: SKNode {
         gfx_set_text_baseline(2)               // restore default 'top'
         gfx_restore()
     }
+
+    // Batched draw: ONE gfx_draw_text_xform crossing for the whole label (the per-node
+    // transform + set_alpha/scale/baseline/draw/restore). Used by SKScene.renderWorld
+    // for clean-ancestor labels — the emoji-heavy scene's biggest crossing-count win.
+    func drawBatched(wx: Float, wy: Float, rotDeg: Float, sx: Float, sy: Float, alpha: Float) {
+        guard !_text.isEmpty, let c = fontColor else { return }
+        let px = Int32(fontSize)
+        let font = resolvedFontHandle()
+        let w = Float(rawWidth())
+        let x: Float
+        switch horizontalAlignmentMode {
+        case .center: x = -w / 2
+        case .left:   x = 0
+        case .right:  x = -w
+        }
+        let baselineMode: Int32
+        switch verticalAlignmentMode {
+        case .baseline: baselineMode = 0
+        case .center:   baselineMode = 1
+        case .top:      baselineMode = 2
+        case .bottom:   baselineMode = 3
+        }
+        withUTF8Ptr(_text) { p, n in
+            gfx_draw_text_xform(font, p, n, wx, wy, rotDeg, sx, sy, x, px, baselineMode, alpha, c.rgba, 0)
+        }
+    }
 }
 
 
