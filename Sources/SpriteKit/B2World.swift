@@ -207,12 +207,25 @@ enum B2 {
     static func addPolygon(_ x: Float, _ y: Float, _ pts: [Float],
                            _ dynamic: Bool, _ cat: UInt32, _ mask: UInt32, _ sensor: Bool) -> Int32 {
         let maxVerts = Int(B2_MAX_POLYGON_VERTICES)
-        let n = min(pts.count / 2, maxVerts)
+        let n = pts.count / 2
         if n < 3 { return -1 }
         var verts = [b2Vec2]()
         verts.reserveCapacity(n)
         for i in 0..<n { verts.append(b2Vec2(x: pts[i*2], y: pts[i*2+1])) }
-        let hull = verts.withUnsafeBufferPointer { b2ComputeHull($0.baseAddress, Int32(n)) }
+        // b2ComputeHull only accepts up to maxVerts INPUT points (it hulls a
+        // small hand-specified polygon, not an arbitrary point cloud) — a path
+        // with curves (addQuadCurve/addCurve) flattens to far more points than
+        // that (e.g. any non-trivial SKPhysicsBody(polygonFrom:) outline), so
+        // this used to just take the FIRST maxVerts raw points in path order
+        // and hull those, silently building a wrong/degenerate shape from an
+        // arbitrary chunk of the boundary (players fell through the floor with
+        // no visible cause). Reduce to the real hull ourselves first when
+        // there are too many points, then decimate that hull's perimeter down
+        // to maxVerts — preserves the actual silhouette instead of truncating.
+        if verts.count > maxVerts {
+            verts = decimatePolygon(convexHull(verts), to: maxVerts)
+        }
+        let hull = verts.withUnsafeBufferPointer { b2ComputeHull($0.baseAddress, Int32(verts.count)) }
         if hull.count < 3 { return -1 }
         let (id, body) = newBody(x, y, dynamic)
         var sd = shapeDef(cat, mask, sensor)
@@ -222,6 +235,74 @@ enum B2 {
         var twin = sensorDef()
         b2CreatePolygonShape(body, &twin, &poly)
         return id
+    }
+
+    private static func hullCross(_ o: b2Vec2, _ a: b2Vec2, _ b: b2Vec2) -> Float {
+        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    }
+
+    // Simple O(n^2) selection sort by (x, then y) — n is a handful of path
+    // points here, not a hot loop, and this avoids handing a capturing
+    // closure to Array.sorted(by:).
+    private static func hullSortedByXY(_ pts: [b2Vec2]) -> [b2Vec2] {
+        var points = pts
+        let count = points.count
+        var i = 0
+        while i < count {
+            var minIdx = i
+            var j = i + 1
+            while j < count {
+                let a = points[j], b = points[minIdx]
+                if a.x < b.x || (a.x == b.x && a.y < b.y) { minIdx = j }
+                j += 1
+            }
+            if minIdx != i { points.swapAt(i, minIdx) }
+            i += 1
+        }
+        return points
+    }
+
+    // Andrew's monotone-chain convex hull, O(n log n) sort + O(n) sweep.
+    // Unlike b2ComputeHull this accepts any number of input points.
+    private static func convexHull(_ pts: [b2Vec2]) -> [b2Vec2] {
+        let points = hullSortedByXY(pts)
+        let count = points.count
+        var lower: [b2Vec2] = []
+        var i = 0
+        while i < count {
+            let p = points[i]
+            while lower.count >= 2 && hullCross(lower[lower.count - 2], lower[lower.count - 1], p) <= 0 {
+                lower.removeLast()
+            }
+            lower.append(p)
+            i += 1
+        }
+        var upper: [b2Vec2] = []
+        i = count - 1
+        while i >= 0 {
+            let p = points[i]
+            while upper.count >= 2 && hullCross(upper[upper.count - 2], upper[upper.count - 1], p) <= 0 {
+                upper.removeLast()
+            }
+            upper.append(p)
+            i -= 1
+        }
+        lower.removeLast()
+        upper.removeLast()
+        var result = lower
+        result.append(contentsOf: upper)
+        return result
+    }
+
+    // Evenly resample a convex polygon's perimeter down to at most maxVerts
+    // vertices, keeping the overall silhouette instead of dropping a run of
+    // consecutive vertices (which can carve off a whole side of the shape).
+    private static func decimatePolygon(_ hull: [b2Vec2], to maxVerts: Int) -> [b2Vec2] {
+        guard hull.count > maxVerts else { return hull }
+        var out: [b2Vec2] = []
+        out.reserveCapacity(maxVerts)
+        for i in 0..<maxVerts { out.append(hull[(i * hull.count) / maxVerts]) }
+        return out
     }
 
     static func addEdge(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float,

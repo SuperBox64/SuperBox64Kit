@@ -500,3 +500,11 @@ open class SKNode {
 extension SKNode: Equatable {
     public static func == (lhs: SKNode, rhs: SKNode) -> Bool { lhs === rhs }
 }
+
+// Apple's SKNode also inherits NSObject's identity-based hash, which games
+// rely on to key Set<SKNode> / [SKNode: Value] by reference.
+extension SKNode: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(ObjectIdentifier(self))
+    }
+}

@@ -26,6 +26,28 @@ public struct SKColor: Equatable, Sendable {
     public init(calibratedWhite: CGFloat, alpha: CGFloat) {
         self.init(white: calibratedWhite, alpha: alpha)
     }
+    // NSColor/UIColor HSB initializer (games use this for rainbow/hue-cycled
+    // effects). Standard HSB->RGB conversion.
+    public init(hue: CGFloat, saturation: CGFloat, brightness: CGFloat, alpha: CGFloat) {
+        if saturation <= 0 {
+            self.init(red: brightness, green: brightness, blue: brightness, alpha: alpha)
+            return
+        }
+        let h = (hue.truncatingRemainder(dividingBy: 1) + 1).truncatingRemainder(dividingBy: 1) * 6
+        let i = Int(h)
+        let f = h - CGFloat(i)
+        let p = brightness * (1 - saturation)
+        let q = brightness * (1 - saturation * f)
+        let t = brightness * (1 - saturation * (1 - f))
+        switch i % 6 {
+        case 0:  self.init(red: brightness, green: t, blue: p, alpha: alpha)
+        case 1:  self.init(red: q, green: brightness, blue: p, alpha: alpha)
+        case 2:  self.init(red: p, green: brightness, blue: t, alpha: alpha)
+        case 3:  self.init(red: p, green: q, blue: brightness, alpha: alpha)
+        case 4:  self.init(red: t, green: p, blue: brightness, alpha: alpha)
+        default: self.init(red: brightness, green: p, blue: q, alpha: alpha)
+        }
+    }
 
     func u8(_ v: CGFloat) -> UInt32 { UInt32(max(0, min(255, Int(v * 255 + 0.5)))) }
     public var rgba: UInt32 { (u8(r) << 24) | (u8(g) << 16) | (u8(b) << 8) | u8(a) }
@@ -52,6 +74,7 @@ public struct SKColor: Equatable, Sendable {
     public static let orange  = SKColor(red: 1, green: 0.5, blue: 0, alpha: 1)
     public static let cyan    = SKColor(red: 0, green: 1, blue: 1, alpha: 1)
     public static let magenta = SKColor(red: 1, green: 0, blue: 1, alpha: 1)
+    public static let brown   = SKColor(red: 0.6, green: 0.4, blue: 0.2, alpha: 1)
     // macOS NSColor light-mode sRGB system palette (the SpriteKit master is a Mac
     // app), so game source that uses .systemRed / .systemPurple / etc. renders the
     // same color the Xcode build does — iOS values differ and looked washed out.

@@ -3,6 +3,42 @@
 // driven from SKView.tick once per frame via KitRunLoop. Single-threaded wasm
 // makes the unsynchronised globals safe.
 
+// MARK: - Date (minimal — games use it for elapsed-time bookkeeping like
+// spawn cooldowns/expiry, not wall-clock persistence, so backing it with the
+// kit's per-frame clock is behaviorally equivalent to Foundation's Date here).
+public struct Date: Sendable {
+    private let t: Double
+    public init() { t = Double(SKSpriteNode.kitClock()) }
+    public var timeIntervalSince1970: Double { t }
+    public var timeIntervalSinceReferenceDate: Double { t }
+    public func timeIntervalSince(_ other: Date) -> Double { t - other.t }
+}
+
+// MARK: - String.components(separatedBy:) (NSString-bridged on Apple; no
+// Foundation here, so split manually)
+public extension String {
+    func components(separatedBy separator: String) -> [String] {
+        if separator.isEmpty { return [self] }
+        let h = Array(self), n = Array(separator)
+        guard h.count >= n.count else { return [self] }
+        var result: [String] = []
+        var start = 0, i = 0
+        while i <= h.count - n.count {
+            var match = true
+            for k in 0..<n.count where h[i + k] != n[k] { match = false; break }
+            if match {
+                result.append(String(h[start..<i]))
+                i += n.count
+                start = i
+            } else {
+                i += 1
+            }
+        }
+        result.append(String(h[start...]))
+        return result
+    }
+}
+
 // MARK: - KitRunLoop (the per-frame pump other shims and modules hook into)
 
 public enum KitRunLoop {
@@ -171,6 +207,7 @@ public final class NSMutableDictionary {
         public var uint32Value: UInt32? { if case let .uint32(v) = self { return v }; return nil }
         public var doubleValue: Double? { if case let .double(v) = self { return v }; return nil }
         public var stringValue: String? { if case let .string(v) = self { return v }; return nil }
+        public var cgFloatValue: CGFloat? { doubleValue.map { CGFloat($0) } }
     }
     private var storage: [String: Value] = [:]
     public init() {}
@@ -189,6 +226,27 @@ public final class NSMutableDictionary {
     }
     #endif
 }
+
+// Apple's NSMutableDictionary bridges to a Swift dictionary literal (games
+// write `node.userData = ["key": value]`).
+#if hasFeature(Embedded)
+extension NSMutableDictionary.Value: ExpressibleByBooleanLiteral {
+    public init(booleanLiteral value: Bool) { self = .bool(value) }
+}
+extension NSMutableDictionary: ExpressibleByDictionaryLiteral {
+    public convenience init(dictionaryLiteral elements: (String, Value)...) {
+        self.init()
+        for (k, v) in elements { self[k] = v }
+    }
+}
+#else
+extension NSMutableDictionary: ExpressibleByDictionaryLiteral {
+    public convenience init(dictionaryLiteral elements: (String, Any)...) {
+        self.init()
+        for (k, v) in elements { self[k] = v }
+    }
+}
+#endif
 
 #if hasFeature(Embedded)
 // The Embedded stdlib has no substring search (that lives in _StringProcessing);

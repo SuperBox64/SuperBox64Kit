@@ -84,12 +84,18 @@ build_mod() {
     -emit-module -emit-module-path "$B/mod/$m.swiftmodule" \
     -c "$B/src/$m"/*.swift -o "$B/mod/$m.o"
 }
-for m in SpriteKit AppKit GameplayKit GameController; do echo "  $m"; build_mod "$m"; done
+for m in SpriteKit AppKit GameplayKit GameController AVFoundation; do echo "  $m"; build_mod "$m"; done
 
 echo "→ game + backend + main (one module)"
 mkdir -p "$B/src/game"
 for f in "$GAME_SRC"/*.swift; do
-  sed -e 's/@MainActor//g' "$f" > "$B/src/game/$(basename "$f")"
+  # DispatchQueue.main -> .shared: same queue (see AVFoundation.swift), but the
+  # literal spelling ".main" makes the compiler infer @MainActor on the
+  # submitted closure, which asserts under Embedded (no MainActor type there).
+  # (macOS's BSD sed has no \b word-boundary escape, so match the literal
+  # "DispatchQueue.main" substring directly.)
+  sed -e 's/@MainActor//g' -e 's/DispatchQueue\.main/DispatchQueue.shared/g' \
+    "$f" > "$B/src/game/$(basename "$f")"
 done
 cp sdl3-backend.swift kit-shader.swift "$B/src/game/"
 cp "$GAME_MAIN" "$B/src/game/native-main.swift"

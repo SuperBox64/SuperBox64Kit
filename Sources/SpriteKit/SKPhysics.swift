@@ -439,6 +439,12 @@ private func flatXY(_ pts: [CGPoint]) -> [Float] {
     return flat
 }
 
+// Apple's SKPhysicsBody inherits NSObject identity equality; games rely on it
+// for `[SKPhysicsBody].contains(_:)` (e.g. checking allContactedBodies()).
+extension SKPhysicsBody: Equatable {
+    public static func == (lhs: SKPhysicsBody, rhs: SKPhysicsBody) -> Bool { lhs === rhs }
+}
+
 // Quick AABB over an arbitrary point list — used for polygon/edge body fallback.
 private func boundingBox(of pts: [CGPoint]) -> CGRect {
     guard let first = pts.first else { return .zero }

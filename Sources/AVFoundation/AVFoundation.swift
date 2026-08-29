@@ -400,6 +400,7 @@ public final class AVAudioPCMBuffer {
     public var frameCapacity: AVAudioFrameCount = 0
     public var frameLength: AVAudioFrameCount = 0
     public var soundHandle: Int32 = 0      // file-backed (AVAudioFile.read(into:))
+    public private(set) var format: AVAudioFormat = AVAudioFormat()
 
     var sampleRate: Double = 44100
     private var samples: UnsafeMutablePointer<Float>?
@@ -409,6 +410,7 @@ public final class AVAudioPCMBuffer {
     public init() {}
     public init?(pcmFormat: AVAudioFormat, frameCapacity: AVAudioFrameCount) {
         self.frameCapacity = frameCapacity
+        self.format = pcmFormat
         self.sampleRate = pcmFormat.sampleRate
         let n = max(1, Int(frameCapacity))
         let buf = UnsafeMutablePointer<Float>.allocate(capacity: n)

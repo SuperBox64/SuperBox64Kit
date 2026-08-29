@@ -8,7 +8,7 @@ Add this package to a macOS or iOS SpriteKit game, keep every `import SpriteKit`
 
 **Web runtime:** [WasmKit](https://github.com/SuperBox64/WasmKit) — the JavaScript host (`runtime.js`) that renders the wasm on Canvas2D and fulfils the KitABI imports in the browser.
 
-License: Apache 2.0 · Bundles Box2D v3.1.1 (Erin Catto, MIT) · Copyright 2026 Todd Bruss
+License: Apache 2.0 · Bundles Box2D v3.1.1 (Erin Catto, MIT) · Copyright 2026 Heisenburg
 
 ---
 
@@ -428,7 +428,7 @@ See `native/README.md` for the three-permutation map and exact native build/run 
 
 ## Credits & acknowledgements
 
-- **SuperBox64 SpriteKit** — Copyright 2026 Todd Bruss.
+- **SuperBox64 SpriteKit** — Copyright 2026 Heisenburg.
 - **Box2D v3.1.1** — Erin Catto, MIT License (vendored, see `NOTICE`).
 - **SDL3** — the [libsdl-org/SDL](https://github.com/libsdl-org/SDL) project.
 - **stb_image / stb_truetype** — Sean Barrett (public domain).
