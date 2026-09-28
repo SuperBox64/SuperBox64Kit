@@ -57,3 +57,9 @@ platform plays every game ever built on the framework. Permutation 3 skips
 wasm entirely for stores that want plain binaries (Steam, itch, consoles),
 still from 100% common game source. The web build stays untouched either way;
 the WABI header attribute only applies under `__wasm__`.
+
+---
+
+**AgentiLoop:** [agentiloop.ai](https://agentiloop.ai/)
+
+Copyright © 2026 AgentiLoop.ai, a Logos InkPen LLC company. All rights reserved.

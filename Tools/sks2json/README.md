@@ -94,3 +94,9 @@ rebuilds the node tree.
   metadata. Set them in code on the matching named node.
 - `SKWarpGeometry`, `SK3DNode`, shaders aren't supported (matches the
   runtime's coverage).
+
+---
+
+**AgentiLoop:** [agentiloop.ai](https://agentiloop.ai/)
+
+Copyright © 2026 AgentiLoop.ai, a Logos InkPen LLC company. All rights reserved.

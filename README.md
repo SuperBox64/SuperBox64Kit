@@ -439,3 +439,7 @@ See `native/README.md` for the three-permutation map and exact native build/run 
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Apache 2.0 grants an explicit patent license and terminates it on patent litigation, protecting contributors and users from patent ambush. Bundles Box2D v3.1.1 (Erin Catto, MIT).
+
+---
+
+**AgentiLoop:** [agentiloop.ai](https://agentiloop.ai/)
