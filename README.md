@@ -1,6 +1,6 @@
 # superbox64-spritekit
 
-🤖 **Built by the makers of [Agent!](https://github.com/AgentiLoop/Agent)**, an autonomous macOS agent.
+🤖 **Built by the makers of [Agent!](https://github.com/AgentiLoop/Agent)**, an autonomous macOS agent. 🌐 [agentiloop.ai](https://agentiloop.ai)
 
 
 A Swift reimplementation of Apple's SpriteKit that compiles to WebAssembly via WASI Preview 1. A macOS or iOS SpriteKit game adds this package, keeps every `import SpriteKit` unchanged, and runs in any modern browser with no source edits.
